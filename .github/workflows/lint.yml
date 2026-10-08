@@ -1,0 +1,40 @@
+name: lint
+
+# Shared checks for the whole repository. No path filter: this runs on every pull request,
+# whichever plugin folder it touches.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.2"
+          enable-cache: false
+      # ruff reads the nearest [tool.ruff] for each file, so every plugin is linted with its own
+      # pyproject.toml settings. Keep this version equal to the plugins' `ruff==` dev pin.
+      - name: ruff check
+        run: uvx ruff@0.16.3 check .
+      - name: ruff format
+        run: uvx ruff@0.16.3 format --check .
+      - name: Lint the workflows
+        run: uvx --from actionlint-py==1.7.12.25 actionlint
+      - name: Each plugin's LICENSE equals the root LICENSE
+        run: |
+          for f in */pyproject.toml; do
+            [ -e "$f" ] || continue
+            cmp LICENSE "$(dirname "$f")/LICENSE" || exit 1
+          done
