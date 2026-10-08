@@ -1,0 +1,184 @@
+name: teacache-release
+
+# PyPI's trusted publisher for mflux-teacache names this file, so the publish job must stay here.
+
+on:
+  push:
+    tags: ["teacache-v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: teacache-release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    # A tag ships only if it is well formed, its commit is on main and it equals project.version.
+    # These checks catch mistakes; they are not the access control. That is the pypi-teacache environment's required
+    # reviewer, together with the tag ruleset for teacache-v*. Keep both.
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Tag name is teacache-vX.Y.Z
+        run: |
+          if ! [[ "$GITHUB_REF_NAME" =~ ^teacache-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match teacache-vX.Y.Z; refusing to release"
+            exit 1
+          fi
+      - name: Tag commit is reachable from main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_SHA is not an ancestor of origin/main; refusing to release"
+            exit 1
+          fi
+      - name: Tag equals project.version
+        id: version
+        run: |
+          tag_version="${GITHUB_REF_NAME#teacache-v}"
+          project_version=$(python3 -c 'import tomllib; print(tomllib.load(open("teacache/pyproject.toml", "rb"))["project"]["version"])')
+          if [ "$tag_version" != "$project_version" ]; then
+            echo "::error::tag version $tag_version differs from project.version $project_version in teacache/pyproject.toml; refusing to release"
+            exit 1
+          fi
+          echo "version=$project_version" >> "$GITHUB_OUTPUT"
+
+  test:
+    # Runs the required job directly: the tagged commit may have touched only another folder,
+    # so a teacache push run need not exist for it.
+    needs: verify
+    uses: ./.github/workflows/teacache.yml
+    with:
+      blocking-only: true
+
+  build:
+    needs: [verify, test]
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: teacache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.2"
+          enable-cache: false
+      - name: Build distributions
+        run: uv build
+      - name: dist/ holds exactly the wheel and sdist of the verified version
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          shopt -s nullglob
+          wheels=(dist/mflux_teacache-"$VERSION"-*.whl)
+          sdists=(dist/mflux_teacache-"$VERSION".tar.gz)
+          everything=(dist/*)
+          if [ "${#wheels[@]}" -ne 1 ] || [ "${#sdists[@]}" -ne 1 ] || [ "${#everything[@]}" -ne 2 ]; then
+            ls -l dist
+            echo "::error::dist/ must hold exactly one mflux_teacache-$VERSION wheel and its sdist"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: teacache-dist
+          path: teacache/dist/
+
+  test-wheel:
+    # Installs the built wheel the way `pip install mflux-teacache` does: no lock, so the newest mflux and mlx-teacache
+    # the requirements allow. Then runs the offline test suite against that installed package, not against src/.
+    needs: [verify, build]
+    runs-on: macos-14  # the test job's runner image; MLX has no Linux wheel
+    defaults:
+      run:
+        working-directory: teacache
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.2"
+          enable-cache: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: teacache-dist
+          path: teacache/dist/
+      - name: Install the wheel into a fresh environment, without the lock
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/wheel-env"
+          # pytest as in the dev group of pyproject.toml; packaging is imported by tests/test_wheel.py.
+          uv pip install --python "$RUNNER_TEMP/wheel-env/bin/python" \
+            dist/mflux_teacache-"$VERSION"-*.whl "pytest>=9.1,<10.0" packaging
+          uv pip show --python "$RUNNER_TEMP/wheel-env/bin/python" mflux-teacache mflux mlx-teacache
+      - name: The tests will import the installed package
+        run: |
+          "$RUNNER_TEMP/wheel-env/bin/python" -c '
+          import mflux.extras.teacache as package
+          assert "site-packages" in package.__file__, package.__file__
+          print(package.__file__)
+          '
+      - name: Offline test suite against the installed wheel
+        # A newer mflux than mlx-teacache has verified only warns for users, so it only warns here too.
+        run: |
+          "$RUNNER_TEMP/wheel-env/bin/python" -m pytest -p no:cacheprovider \
+            -W "default::mlx_teacache.TeaCacheUntestedMfluxWarning"
+
+  publish:
+    needs: [build, test-wheel]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-teacache
+      url: https://pypi.org/p/mflux-teacache
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: teacache-dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/
+
+  github-release:
+    needs: [verify, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: teacache-dist
+          path: dist/
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.verify.outputs.version }}
+        run: |
+          # The notes start at the highest teacache-vX.Y.Z tag below this version, so a patch for an older line
+          # starts from that line's last release, not from a newer one. Pull requests for other plugins merged in that
+          # window still appear, because GitHub's generated notes are repository-wide.
+          prev=$(git tag --list 'teacache-v*' \
+            | sed -n 's/^teacache-v\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' \
+            | sort -uV \
+            | awk -v cur="$VERSION" '$0 == cur { print last; exit } { last = $0 }')
+          prev=${prev:+teacache-v$prev}
+          gh release create "$GITHUB_REF_NAME" dist/* --title "mflux-teacache $VERSION" \
+            --generate-notes --verify-tag ${prev:+--notes-start-tag "$prev"}
