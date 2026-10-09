@@ -262,6 +262,73 @@ def test_the_calibrated_repo_id_is_not_a_custom_checkpoint(run_command, teacache
     assert len(FakeZImage.instances) == 1
 
 
+ORG_BASE_COPIES = [
+    "mflux-community/z-image-base-mflux-q3",
+    "mflux-community/z-image-base-mflux-q4",
+    "mflux-community/z-image-base-mflux-q5",
+    "mflux-community/z-image-base-mflux-q6",
+    "mflux-community/z-image-base-mflux-q8",
+    "mflux-community/z-image-base-mflux-bf16",
+]
+
+
+@pytest.mark.parametrize("repo", ORG_BASE_COPIES)
+def test_a_known_copy_of_the_calibrated_checkpoint_does_not_warn(run_command, teacache, repo) -> None:
+    """Bug: the model-path check compares only against Tongyi-MAI/Z-Image, so the org's own copies of that model at
+    other precisions (each declares base_model: Tongyi-MAI/Z-Image on the Hub) warn on every run; or one id is
+    misspelled in the adapter's list."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", repo])
+    assert FakeZImage.instances[0].init_kwargs["model_path"] == repo
+
+
+def test_no_turbo_copy_is_listed_as_a_copy_of_the_calibrated_checkpoint() -> None:
+    """Bug: a z-image-turbo-* repo (Turbo, a different model) is added to the adapter's known copies of
+    Tongyi-MAI/Z-Image, so a Turbo checkpoint forced through with --base-model z-image runs without the warning."""
+    assert [repo for repo in z_image.ADAPTER.calibrated_copies if "turbo" in repo.lower()] == []
+
+
+TURBO_COPIES = [
+    "mflux-community/z-image-turbo-mflux-q3",
+    "mflux-community/z-image-turbo-mflux-q4",
+    "mflux-community/z-image-turbo-mflux-q5",
+    "mflux-community/z-image-turbo-mflux-q6",
+    "mflux-community/z-image-turbo-mflux-q8",
+    "mflux-community/z-image-turbo-mflux-bf16",
+]
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        # Turbo is a different model: mflux resolves these names to the Turbo config and the command refuses them, so
+        # --base-model z-image forces each through to the checkpoint check.
+        *TURBO_COPIES,
+        "someorg/z-image-base-mflux-q4",
+    ],
+)
+def test_a_lookalike_of_a_known_copy_still_warns(run_command, teacache, repo) -> None:
+    """Bug: the known-copy check matches by substring or suffix ("z-image-base-mflux", "mflux-q4") or ignores the
+    owner, so a Turbo copy loaded as base, or another owner's repo with the same name, runs unannounced."""
+    with pytest.warns(TeaCacheUncalibratedCheckpointWarning, match=re.escape(repo)):
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", repo, "--base-model", "z-image"])
+    assert FakeZImage.instances[0].init_kwargs["model_path"] == repo
+
+
+def test_the_custom_checkpoint_warning_says_what_is_and_is_not_known(run_command, teacache) -> None:
+    """Bug: the warning states as fact that the weights differ, calls another precision of the model fine although
+    only one 8-bit build was measured, drops the note that TeaCache still runs, or loses the repo names, so the user
+    can't tell whether to act."""
+    with pytest.warns(TeaCacheUncalibratedCheckpointWarning) as caught:
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "someorg/my-zimage-finetune"])
+    messages = [str(w.message) for w in caught if issubclass(w.category, TeaCacheUncalibratedCheckpointWarning)]
+    assert messages == [
+        "someorg/my-zimage-finetune may not be Tongyi-MAI/Z-Image, the checkpoint TeaCache's settings were tuned on. "
+        "Skip counts and image quality on it are unmeasured. TeaCache still runs."
+    ]
+
+
 def test_an_uncalibrated_checkpoint_warns_once_and_runs(run_command, teacache, monkeypatch) -> None:
     """Bug: a supported model on a checkpoint its coefficients were not fitted on (VariantInfo.calibrated False; on a
     future Qwen command, Qwen-Image-2512) is refused, runs silently, or warns twice. Z-Image is always calibrated, so
@@ -278,12 +345,14 @@ def test_an_uncalibrated_checkpoint_warns_once_and_runs(run_command, teacache, m
         warnings.simplefilter("always")
         run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "someorg/my-zimage-finetune"])
     messages = [str(w.message) for w in caught if issubclass(w.category, TeaCacheUncalibratedCheckpointWarning)]
-    assert len(messages) == 1
     others = [
         f"{w.category.__name__}: {w.message}" for w in caught if w.category is not TeaCacheUncalibratedCheckpointWarning
     ]
     assert others == []
-    assert "not the checkpoint Z-Image base's TeaCache coefficients were calibrated on" in messages[0]
+    assert messages == [
+        "someorg/my-zimage-finetune is not the checkpoint Z-Image base's TeaCache settings were tuned on. "
+        "Skip counts and image quality on it are unmeasured. TeaCache still runs."
+    ]
     assert len(FakeZImage.instances) == 1
 
 

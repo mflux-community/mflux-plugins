@@ -55,7 +55,10 @@ class Adapter:
       default_active_steps (mflux's own Config.init_time_step).
     - library_checks_checkpoint: True when mlx-teacache's VariantInfo.calibrated already tells a
       custom checkpoint apart (Qwen-Image); it switches off this package's model-path warning so
-      the user sees one warning, not two."""
+      the user sees one warning, not two.
+    - calibrated_copies: repo ids known to hold the calibrated checkpoint's model at other precisions (copies
+      whose model card declares it as base_model); --model-path set to one of them does not warn. TeaCache's
+      settings were measured on one build only, so these run unmeasured, just without the warning."""
 
     command: str
     plain_command: str
@@ -70,6 +73,7 @@ class Adapter:
     after_checks: Callable[[Namespace, ModelConfig], None] | None = None
     active_steps: Callable[[Namespace, ModelConfig], int] | None = None
     library_checks_checkpoint: bool = False
+    calibrated_copies: tuple[str, ...] = ()
 
 
 def add_teacache_arguments(parser: CommandLineParser) -> None:
@@ -195,18 +199,23 @@ def _warn_unverified_checkpoint(
         shown = model_path or args.model or model_config.model_name
         warnings.warn(
             TeaCacheUncalibratedCheckpointWarning(
-                f"{shown} is not the checkpoint {variant.display_name}'s TeaCache coefficients were calibrated "
-                "on; skip counts and image quality on it are unchecked. TeaCache still runs."
+                f"{shown} is not the checkpoint {variant.display_name}'s TeaCache settings were tuned on. "
+                "Skip counts and image quality on it are unmeasured. TeaCache still runs."
             ),
             stacklevel=3,
         )
         return
-    if adapter.library_checks_checkpoint or model_path is None or model_path == model_config.model_name:
+    if (
+        adapter.library_checks_checkpoint
+        or model_path is None
+        or model_path == model_config.model_name
+        or model_path in adapter.calibrated_copies
+    ):
         return
     warnings.warn(
         TeaCacheUncalibratedCheckpointWarning(
-            f"{model_path} is not {model_config.model_name}, the checkpoint TeaCache's coefficients were "
-            "calibrated on; skip counts and image quality on it are unchecked."
+            f"{model_path} may not be {model_config.model_name}, the checkpoint TeaCache's settings were tuned on. "
+            "Skip counts and image quality on it are unmeasured. TeaCache still runs."
         ),
         stacklevel=3,
     )

@@ -59,7 +59,8 @@ def warn_ineffective_options(args: Namespace, model_config: ModelConfig) -> None
 
 
 # Z-Image needs one optional hook (after_checks); active_steps keeps the Config-based default, and
-# mlx-teacache has no checkpoint check for Z-Image, so this package's own model-path warning applies.
+# mlx-teacache has no checkpoint check for Z-Image, so this package's own model-path warning applies,
+# except on the known copies of the calibrated checkpoint.
 ADAPTER = Adapter(
     command="mflux-generate-z-image-teacache",
     plain_command="mflux-generate-z-image",
@@ -71,6 +72,17 @@ ADAPTER = Adapter(
     generate=ZImageCommand.generate,
     latent_creator=ZImageCommand.latent_creator,
     after_checks=warn_ineffective_options,
+    # The org's copies of Tongyi-MAI/Z-Image at other precisions (q3 to q8 quantized, bf16 not): each model card
+    # declares base_model: Tongyi-MAI/Z-Image (checked on the Hub 2026-10-09). TeaCache's settings were measured on
+    # one 8-bit build only. The z-image-turbo-* copies hold Turbo, a different model, and are not here.
+    calibrated_copies=(
+        "mflux-community/z-image-base-mflux-q3",
+        "mflux-community/z-image-base-mflux-q4",
+        "mflux-community/z-image-base-mflux-q5",
+        "mflux-community/z-image-base-mflux-q6",
+        "mflux-community/z-image-base-mflux-q8",
+        "mflux-community/z-image-base-mflux-bf16",
+    ),
 )
 
 
