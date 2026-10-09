@@ -1,0 +1,94 @@
+name: template
+
+# The template is never published, so it has no release workflow. Its tests run when it changes and once a week,
+# against the locked mflux and against mflux main.
+
+on:
+  push:
+    branches: [main]
+    paths: ["template/**", ".github/workflows/template.yml"]
+  pull_request:
+    paths: ["template/**", ".github/workflows/template.yml"]
+  schedule:
+    - cron: "41 6 * * 1"  # weekly: the template is checked against mflux main once a week
+  workflow_dispatch:
+  workflow_call:  # a plugin's release workflow runs the required job before it publishes
+    inputs:
+      blocking-only:
+        description: Run only the required test job
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: template-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    working-directory: template
+
+jobs:
+  test:
+    # The tests run MLX on Apple Silicon, so every job runs on macOS.
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.13"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}  # overrides template/.python-version for every uv call below
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.2"
+          enable-cache: true
+          cache-dependency-glob: template/uv.lock
+      - run: uv sync --locked --python ${{ matrix.python }}
+      - run: uv run --locked ruff check .
+      - run: uv run --locked ruff format --check .
+      - run: uv run --locked ty check src
+      - run: uv run --locked pytest  # the wheel test calls `uv build`; setup-uv puts uv on PATH
+
+  mflux-main:
+    # Red here means mflux main changed something this package copies or calls. Allowed to fail on pull requests and
+    # pushes; the scheduled run fails for real, so GitHub sends its failure notice.
+    if: ${{ !inputs.blocking-only }}
+    continue-on-error: ${{ github.event_name != 'schedule' }}
+    runs-on: macos-14
+    env:
+      UV_PYTHON: "3.13"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.11.2"
+          enable-cache: true
+          cache-dependency-glob: template/uv.lock
+          # Its own cache key: these environments don't match the lock, so they must never save the cache that the
+          # locked test job restores.
+          cache-suffix: git-main
+      # Sync from uv.lock, then reinstall mflux from its main branch. `uv pip install` re-resolves
+      # mflux's own dependencies, and --upgrade (not --upgrade-package mflux) lets them move off the lock too,
+      # because mflux main may need newer versions than the lock holds.
+      - name: Install the locked environment, then mflux main
+        run: |
+          uv sync --locked
+          uv pip install --upgrade "mflux @ git+https://github.com/mflux-community/mflux@main"
+          uv pip show mflux
+      - name: Drift test (copied mflux code)
+        id: drift
+        run: uv run --no-sync pytest tests/test_mflux_drift.py
+      - name: Rest of the test suite
+        # Runs after a red drift step too, so "copied code moved" and "the command broke" show as separate steps.
+        if: ${{ !cancelled() && (steps.drift.outcome == 'success' || steps.drift.outcome == 'failure') }}
+        run: uv run --no-sync pytest --ignore=tests/test_mflux_drift.py
