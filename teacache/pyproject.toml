@@ -13,7 +13,7 @@ module-name = "mflux.extras.teacache"
 
 [project]
 name = "mflux-teacache"
-version = "0.1.0"
+version = "0.1.1"
 description = "TeaCache step skipping for mflux's command line, powered by mlx-teacache."
 readme = "README.md"
 license = "Apache-2.0"
@@ -53,7 +53,7 @@ mflux-generate-z-image-teacache = "mflux.extras.teacache.z_image:main"
 [dependency-groups]
 dev = [
     "pytest>=9.1,<10.0",
-    # Pinned exactly, matching mflux core.
+    # Pinned exactly, matching the ruff in .github/workflows/lint.yml (scripts/check_plugins.py checks the two agree).
     "ruff==0.16.3",
     "ty==0.0.72",
 ]
@@ -95,7 +95,4 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 filterwarnings = [
     "error",
-    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
-    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
 ]

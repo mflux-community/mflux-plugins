@@ -34,6 +34,9 @@ This package follows the namespace model of [mflux PR #776](https://github.com/m
 | Type check | `uv run ty check src` |
 | Build | `uv build` |
 
+Every uv command against `.venv-py310` needs `--python 3.10`, `uv sync` and `uv run` alike; without it uv rebuilds that
+environment on 3.13 from `.python-version`. CI sets `UV_PYTHON` instead.
+
 Run the tests, ruff and ty before you call a change done.
 
 ## Code layout
@@ -73,7 +76,11 @@ optional hooks its command needs:
 - `before_validate(args)`;
 - `after_checks(args, model_config)`;
 - `active_steps(args, model_config)`, which defaults to mflux's own `Config.init_time_step`;
-- `library_checks_checkpoint`, for a family where mlx-teacache already tells custom checkpoints apart.
+- `library_checks_checkpoint`, for a family where mlx-teacache already tells custom checkpoints apart;
+- `calibrated_copies`, repo ids that hold the calibrated checkpoint's model at other precisions (8-bit and lower, or
+  bf16; each model card declares it as `base_model`). They don't get the checkpoint warning, although the
+  coefficients were measured on one 8-bit build only. Check the model card on the Hub before you add one, and never
+  add a Turbo repo (`tests/test_refusals.py` checks that).
 
 The Z-Image adapter's one hook (`warn_ineffective_options`) copies a block of statements from mflux's `main()`,
 because mflux has no `prepare()` step for it yet. Code copied from mflux is listed in `NOTICE`; a new adapter that
