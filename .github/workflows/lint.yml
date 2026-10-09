@@ -24,8 +24,9 @@ jobs:
         with:
           version: "0.11.2"
           enable-cache: false
-      # ruff reads the nearest [tool.ruff] for each file, so every plugin is linted with its own
-      # pyproject.toml settings. Keep this version equal to the plugins' `ruff==` dev pin.
+      # ruff reads the nearest config for each file, so every plugin is linted with its own pyproject.toml settings
+      # (scripts/ with scripts/ruff.toml). The plugin checker below fails this job when a plugin's `ruff==` dev pin
+      # differs from this version.
       - name: ruff check
         run: uvx ruff@0.16.3 check .
       - name: ruff format
@@ -38,3 +39,7 @@ jobs:
             [ -e "$f" ] || continue
             cmp LICENSE "$(dirname "$f")/LICENSE" || exit 1
           done
+      - name: Plugin folders follow the repository rules
+        run: uv run --python 3.13 --no-project scripts/check_plugins.py
+      - name: Tests of the plugin checker
+        run: uvx --python 3.13 --from 'pytest==9.1.1' pytest -W error -p no:cacheprovider -o pythonpath=scripts scripts -q

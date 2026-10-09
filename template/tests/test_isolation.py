@@ -19,8 +19,9 @@ def test_the_hub_is_offline_and_its_cache_is_a_private_empty_directory() -> None
     assert huggingface_hub.constants.is_offline_mode()
     assert os.environ["HF_HUB_OFFLINE"] == "1"
     hub_cache = Path(huggingface_hub.constants.HF_HUB_CACHE)
-    assert hub_cache.parent.name.startswith("mflux-teacache-hf-home-")
+    assert hub_cache.parent.name.startswith("mflux-myplugin-hf-home-")
     assert not hub_cache.exists() or not any(hub_cache.iterdir())
+    assert Path(huggingface_hub.constants.HF_XET_CACHE).parent == hub_cache.parent
 
 
 def test_the_users_own_cache_variables_are_replaced(tmp_path: Path) -> None:
@@ -34,7 +35,7 @@ def test_the_users_own_cache_variables_are_replaced(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     home, hub, xet = (Path(line) for line in result.stdout.splitlines())
-    assert home.name.startswith("mflux-teacache-hf-home-")
+    assert home.name.startswith("mflux-myplugin-hf-home-")
     assert (hub.parent, xet.parent) == (home, home)
 
 
