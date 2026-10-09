@@ -14,7 +14,7 @@ The `teacache` plugin is built on [mlx-teacache](https://github.com/IonDen/mlx-t
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for how a plugin folder is laid out, pull requests and releases. To propose a plugin or report a problem, open an issue in this repository.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for how a plugin folder is laid out, pull requests and releases. To propose a plugin or report a problem, open an issue in this repository. To write a plugin, start from [`template/`](template/) and read the guide, [docs/writing-a-plugin.md](docs/writing-a-plugin.md).
 
 ## License
 
