@@ -6,8 +6,7 @@ your library attaches. It is never published. After renaming, rewrite this READM
 
 To start a plugin, copy this folder and rename `myplugin` everywhere, then replace the example option, the
 refusal and the `apply` hook with your plugin's own. The repository's [CONTRIBUTING.md](../CONTRIBUTING.md)
-describes the rules. A full guide to writing a plugin will come in a later pull request to this repository and will
-live in `docs/`.
+describes the rules, and [docs/writing-a-plugin.md](../docs/writing-a-plugin.md) explains how a plugin works.
 
 ## Start a plugin
 
@@ -28,8 +27,8 @@ live in `docs/`.
 6. Copy `.github/workflows/teacache-release.yml` to `.github/workflows/<folder>-release.yml` and replace `teacache`
    with your folder name everywhere in it. Then remove every mention of mlx-teacache, which the rename turned into
    `mlx-<folder>` or `mlx_<folder>`: the package in `uv pip show`, the `-W` filter for its warning and the comments
-   about it. Before the first `<folder>-v*` tag, an org admin creates the GitHub environment `pypi-<folder>` with a
-   required reviewer, the tag rule for `<folder>-v*` and the PyPI pending publisher for this workflow.
+   about it. Before the first `<folder>-v*` tag, an org admin sets up the release; the steps are under "For maintainers"
+   in [CONTRIBUTING.md](../CONTRIBUTING.md#for-maintainers-a-new-plugin-folder).
 7. Add a line `/<folder>/ @<your-handle>` to `.github/CODEOWNERS` and a row to the Plugins table in the root
    `README.md`.
 8. Rewrite this README for your plugin, the docstring of `src/mflux/extras/<folder>/__init__.py` (`help()` shows

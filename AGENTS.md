@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Repository-wide rules for coding agents. Each plugin folder has its own `AGENTS.md` with the package's rules; read
-it before you change that folder.
+it before you change that folder. Before you write or change a plugin, read `docs/writing-a-plugin.md`.
 
 - One folder per plugin (`teacache/`; `template/` is the starting point for new ones and is never published), each
   an independent uv project with its own `uv.lock`. Don't add a root `pyproject.toml` or a uv workspace. Plugins wrap

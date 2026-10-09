@@ -1,0 +1,91 @@
+name: Propose a plugin
+description: Suggest a new plugin for this repository, before you open a pull request.
+title: "Plugin proposal: mflux-<name>"
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A plugin connects a library to an mflux command. Before you fill this in, read the acceptance criteria in
+        [CONTRIBUTING.md](https://github.com/mflux-community/mflux-plugins/blob/main/CONTRIBUTING.md) and the
+        [plugin guide](https://github.com/mflux-community/mflux-plugins/blob/main/docs/writing-a-plugin.md).
+        Wait for a maintainer's yes here before you open a pull request.
+  - type: input
+    id: name
+    attributes:
+      label: Plugin name
+      description: >-
+        Lowercase letters and digits only, starting with a letter. It is the folder name. The PyPI name is
+        `mflux-<name>` and the module is `mflux.extras.<name>`.
+      placeholder: foobar
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What it does for a user
+      description: >-
+        Two or three sentences. What does a user get from the plugin's command that the plain mflux command doesn't
+        give them?
+    validations:
+      required: true
+  - type: textarea
+    id: library
+    attributes:
+      label: The library it wraps
+      description: A link to it, its license, who maintains it, and where its tests and PyPI releases are.
+    validations:
+      required: true
+  - type: textarea
+    id: commands
+    attributes:
+      label: The mflux commands it extends
+      description: Each one must have command steps. The guide lists the commands that have them, and how to check.
+      placeholder: mflux-generate-z-image
+    validations:
+      required: true
+  - type: textarea
+    id: overlap
+    attributes:
+      label: Overlap with mflux
+      description: >-
+        Does mflux already have a similar feature? If so, how does the plugin refuse to combine with it before any
+        weights load? Write "none" if there is no overlap.
+    validations:
+      required: true
+  - type: input
+    id: maintainers
+    attributes:
+      label: Maintainer
+      description: >-
+        The GitHub handle that will own the plugin's folder in CODEOWNERS. With one maintainer, a repository admin
+        reviews the folder's pull requests.
+      placeholder: "@your-handle"
+    validations:
+      required: true
+  - type: input
+    id: second-maintainer
+    attributes:
+      label: Second maintainer
+      description: Optional. A second handle lets a code owner other than the author review pull requests.
+      placeholder: "@other-handle"
+    validations:
+      required: false
+  - type: checkboxes
+    id: commitments
+    attributes:
+      label: Commitments
+      options:
+        - label: I will answer issues and review pull requests for this plugin's folder.
+          required: true
+        - label: The plugin's tests start from the template's tests and never download weights.
+          required: true
+        - label: I have read the acceptance criteria in CONTRIBUTING.md.
+          required: true
+  - type: textarea
+    id: links
+    attributes:
+      label: Earlier discussion
+      description: Optional. Links to an mflux discussion, issue or pull request about this idea.
+    validations:
+      required: false
