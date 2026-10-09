@@ -1,0 +1,101 @@
+[build-system]
+# The backend this package is built and tested with: uv 0.11.2 (CI pins it) builds with its own uv_build 0.11.2.
+requires = ["uv_build>=0.11.2,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+default-excludes = true
+# mflux PR #776 namespace contract: this distribution ships only mflux/extras/teacache/.
+# Never ship src/mflux/__init__.py (mflux core owns it) or src/mflux/extras/__init__.py
+# (mflux.extras must stay an implicit namespace package that every extras package shares).
+# The dotted module name already marks a namespace package, so no `namespace = true`.
+module-name = "mflux.extras.teacache"
+
+[project]
+name = "mflux-teacache"
+version = "0.1.0"
+description = "TeaCache step skipping for mflux's command line, powered by mlx-teacache."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
+maintainers = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
+requires-python = ">=3.10"
+keywords = ["mflux", "mlx", "teacache", "apple-silicon", "diffusion", "z-image"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    # The supported mflux range comes from mlx-teacache's [mflux] extra, which lists the
+    # mflux versions mlx-teacache has checked. This package adds no mflux upper bound.
+    # 0.13.2 is the first release that records mflux 0.22 as checked (it follows 0.22's bfloat16 Z-Image
+    # stream and does not warn on it).
+    "mlx-teacache[mflux]>=0.13.2",
+    # A floor only: 0.22 is the first mflux whose Z-Image parser sets the scheduler default.
+    "mflux>=0.22",
+]
+
+[project.urls]
+Homepage = "https://github.com/mflux-community/mflux-plugins/tree/main/teacache"
+Repository = "https://github.com/mflux-community/mflux-plugins"
+Issues = "https://github.com/mflux-community/mflux-plugins/issues"
+Documentation = "https://github.com/mflux-community/mflux-plugins/tree/main/teacache#readme"
+
+[project.scripts]
+mflux-generate-z-image-teacache = "mflux.extras.teacache.z_image:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1,<10.0",
+    # Pinned exactly, matching mflux core.
+    "ruff==0.16.3",
+    "ty==0.0.72",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py310"
+respect-gitignore = true
+
+[tool.ruff.lint]
+select = ["BLE", "E4", "E7", "E9", "F", "I", "ICN", "LOG", "PERF", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# conftest.py sets HF_HUB_OFFLINE / HF_HOME before importing anything that reads them.
+"tests/conftest.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+case-sensitive = false
+combine-as-imports = true
+known-first-party = ["mflux.extras.teacache"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.analysis]
+# ty cannot model mflux core's pkgutil.extend_path merge: core is a regular package in
+# site-packages and this distribution adds mflux/extras/teacache/ from src/, so a static
+# resolver reports absolute mflux.extras.* imports as unresolved. The package uses relative
+# imports internally; tests/test_namespace.py checks the real import at runtime.
+allowed-unresolved-imports = ["mflux.extras.**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = [
+    "error",
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]
