@@ -1,6 +1,6 @@
 """Shared fixtures. The first statements make the whole session offline before anything imports
-mflux or huggingface_hub (huggingface_hub reads HF_HUB_OFFLINE and HF_HOME once, at import): no test
-may download a model or read the user's model cache."""
+mflux or huggingface_hub (huggingface_hub reads HF_HUB_OFFLINE and its cache paths once, at import): no
+test may download a model or read the user's model cache."""
 
 import atexit
 import os
@@ -9,6 +9,9 @@ import tempfile
 
 os.environ["HF_HUB_OFFLINE"] = "1"
 os.environ["HF_HOME"] = tempfile.mkdtemp(prefix="mflux-teacache-hf-home-")
+# Each of these overrides HF_HOME when the user has set it, so point both into the temporary home too.
+os.environ["HF_HUB_CACHE"] = os.path.join(os.environ["HF_HOME"], "hub")
+os.environ["HF_XET_CACHE"] = os.path.join(os.environ["HF_HOME"], "xet")
 atexit.register(shutil.rmtree, os.environ["HF_HOME"], ignore_errors=True)
 
 import sys
@@ -45,6 +48,8 @@ def isolated_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     # Child processes (the console-script test) inherit these; this process read them above.
     monkeypatch.setenv("HF_HUB_OFFLINE", "1")
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf-home"))
+    monkeypatch.setenv("HF_HUB_CACHE", str(tmp_path / "hf-home" / "hub"))
+    monkeypatch.setenv("HF_XET_CACHE", str(tmp_path / "hf-home" / "xet"))
     # A default --output (image.png) or any stray file lands in the test's own directory, never the repo.
     monkeypatch.chdir(tmp_path)
     # FakeZImage read the real signature at import; the real class itself can no longer be built.

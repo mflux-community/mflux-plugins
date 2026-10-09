@@ -94,8 +94,9 @@ red:
 
 ## Tests
 
-- No test can download a model. `tests/conftest.py` sets `HF_HUB_OFFLINE=1` and points `HF_HOME` at an empty
-  temporary directory before anything imports mflux or huggingface_hub, because both read these once, at import.
+- No test can download a model. `tests/conftest.py` sets `HF_HUB_OFFLINE=1` and points `HF_HOME`, `HF_HUB_CACHE`
+  and `HF_XET_CACHE` at an empty temporary directory before anything imports mflux or huggingface_hub, because both
+  read these once, at import.
   It also forces huggingface_hub's offline flag, makes the real `ZImage` class refuse to be built, and runs every
   test in its own temporary directory. `tests/test_isolation.py` checks all of that.
 - Fakes stand in for the mflux model class and for `apply_teacache` only; everything else is real mflux and
