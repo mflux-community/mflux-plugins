@@ -181,10 +181,17 @@ def _refuse_what_teacache_cannot_run(
     try:
         check_step_window(active_num_steps=active_steps, nominal_num_inference_steps=args.steps)
     # TeaCacheValueError: a negative count (--steps -1, or --steps 0 with --image); mflux's --steps has no range check.
+    # The plugin prints its own sentence: the library's text names its internal parameters.
     except (InvalidStepWindowError, TeaCacheValueError) as exc:
-        # The library's texts end with or without a period; print exactly one before the hint.
+        if isinstance(exc, TeaCacheValueError):
+            has = f"no valid step count (--steps {args.steps})"
+        elif active_steps == args.steps:
+            has = f"{active_steps}"
+        else:  # an --image strength (or the adapter's own schedule) left fewer steps than --steps
+            has = f"{active_steps} of its {args.steps} --steps"
         parser.error(
-            f"{str(exc).rstrip('.')}. Use more --steps (or a lower --image strength), "
+            "TeaCache needs at least 3 denoising steps: it always computes the first and the last one. "
+            f"This run has {has}. Use more --steps (or a lower --image strength), "
             f"or run {adapter.plain_command} without TeaCache."
         )
     return variant
