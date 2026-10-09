@@ -88,8 +88,8 @@ mlx-teacache's gated version. Nothing on disk changes, and mflux's own commands 
 shell completions list only mflux's own commands.
 
 Each image records what TeaCache did, next to mflux's usual metadata: `teacache_threshold`,
-`teacache_skipped_steps`, `teacache_active_steps`, `teacache_variant` and `teacache_version` (the mlx-teacache
-version). Replaying a TeaCache image with plain mflux and `-C` produces the plain run, without TeaCache. Replaying
+`teacache_skipped_steps`, `teacache_active_steps`, `teacache_variant`, `teacache_version` (the mlx-teacache
+version) and `teacache_plugin_version` (the mflux-teacache version). Replaying a TeaCache image with plain mflux and `-C` produces the plain run, without TeaCache. Replaying
 it with this command uses the model's default threshold unless you pass `--teacache-threshold` again, because the
 `teacache_*` keys are not read back.
 

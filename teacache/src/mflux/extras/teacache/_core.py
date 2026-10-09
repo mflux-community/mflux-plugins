@@ -32,6 +32,8 @@ from mlx_teacache import (
     match_variant,
 )
 
+from . import __version__ as plugin_version
+
 THRESHOLD_FLAG = "--teacache-threshold"
 # mflux 0.22's --compute-precision (float16 today): any non-default value is allowed for now, with this one
 # warning. Kept in one place so a later switch to a refusal is a small change.
@@ -128,6 +130,7 @@ def teacache_metadata(handle: TeaCacheHandle, committed_before: int) -> dict[str
         "teacache_active_steps": int(last.num_steps),
         "teacache_variant": str(getattr(handle, "variant_id", "unknown")),
         "teacache_version": str(mlx_teacache_version),
+        "teacache_plugin_version": str(plugin_version),
     }
 
 
