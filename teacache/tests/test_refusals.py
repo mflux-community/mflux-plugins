@@ -25,6 +25,15 @@ from mflux.extras.teacache import _core, z_image
 PLAIN_HINT = "Run mflux-generate-z-image to generate without TeaCache"
 
 
+def too_short(has: object) -> str:
+    """The step refusal as printed, for a run with `has` active steps."""
+    return (
+        "TeaCache needs at least 3 denoising steps: it always computes the first and the last one. "
+        f"This run has {has}. Use more --steps (or a lower --image strength), "
+        "or run mflux-generate-z-image without TeaCache."
+    )
+
+
 def refused(run_command, argv, capsys, adapter=None) -> str:
     with pytest.raises(SystemExit) as exc:
         run_command(argv, adapter)
@@ -191,7 +200,44 @@ def test_too_few_steps_are_refused(run_command, teacache, capsys, steps, runs) -
         run_command(argv)
         assert len(FakeZImage.instances) == 1
     else:
-        assert "Use more --steps" in refused(run_command, argv, capsys)
+        assert too_short(2) in refused(run_command, argv, capsys)
+
+
+def test_the_step_refusal_is_the_plugins_own_sentence(run_command, teacache, capsys) -> None:
+    """Bug: the refusal prints mlx-teacache's internal text (skip_first_n_steps + skip_last_n_steps, active_num_steps=)
+    instead of saying in plain words why the run is too short and what to do."""
+    err = refused(run_command, ["--prompt", "x", "--seed", "1", "--steps", "2"], capsys)
+    assert (
+        "TeaCache needs at least 3 denoising steps: it always computes the first and the last one. This run has 2. "
+        "Use more --steps (or a lower --image strength), or run mflux-generate-z-image without TeaCache."
+    ) in err
+    assert "skip_first" not in err
+    assert "active_num_steps" not in err
+
+
+@pytest.mark.parametrize(
+    ("steps", "strength", "this_run"),
+    [
+        ("2", None, "This run has 2."),
+        ("4", "0.5", "This run has 2 of its 4 --steps."),
+        ("3", "1.0", "This run has 0 of its 3 --steps."),
+        ("-1", None, "This run has no valid step count (--steps -1)."),
+    ],
+    ids=["steps-2", "steps-4-strength-0.5", "steps-3-strength-1.0", "steps-minus-one"],
+)
+def test_the_step_refusal_says_how_many_steps_the_run_has(
+    run_command, teacache, capsys, tmp_path, steps, strength, this_run
+) -> None:
+    """Bug: the count sentence hides that an --image strength cut the run below --steps ("This run has 2." for
+    --steps 4), says "none" for 0 active steps, or prints a negative step count as if it were a count."""
+    argv = ["--prompt", "x", "--seed", "1", "--steps", steps]
+    if strength is not None:
+        argv += ["--image", str(reference_png(tmp_path)), strength]
+    err = refused(run_command, argv, capsys)
+    assert (
+        "TeaCache needs at least 3 denoising steps: it always computes the first and the last one. "
+        f"{this_run} Use more --steps (or a lower --image strength), or run mflux-generate-z-image without TeaCache."
+    ) in err
 
 
 @pytest.mark.parametrize(("strength", "runs"), [("0.9", False), ("0.85", True)])
@@ -204,7 +250,7 @@ def test_a_short_img2img_window_is_refused(run_command, teacache, capsys, tmp_pa
         assert FakeZImage.instances[0].generate_calls[0]["image_strength"] == 0.85
     else:
         err = refused(run_command, argv, capsys)
-        assert "active_num_steps=2, nominal_num_inference_steps=20 (sum 2 >= 2). Use more --steps" in err
+        assert too_short("2 of its 20 --steps") in err
 
 
 def test_zero_active_steps_are_refused(run_command, teacache, capsys, tmp_path) -> None:
@@ -212,8 +258,7 @@ def test_zero_active_steps_are_refused(run_command, teacache, capsys, tmp_path) 
     TeaCache command, unlike every other too-short window."""
     argv = ["--prompt", "x", "--seed", "1", "--steps", "20", "--image", str(reference_png(tmp_path)), "1.0"]
     err = refused(run_command, argv, capsys)
-    assert "active_num_steps=0, nominal_num_inference_steps=20" in err
-    assert "Use more --steps" in err
+    assert too_short("0 of its 20 --steps") in err
 
 
 @pytest.mark.parametrize("img2img", [False, True], ids=["steps-minus-one", "steps-zero-img2img"])
@@ -221,12 +266,13 @@ def test_a_negative_active_step_count_is_refused(run_command, teacache, capsys, 
     """Bug: only InvalidStepWindowError is turned into a refusal, so the TeaCacheValueError mlx-teacache raises for a
     negative count (--steps -1; --steps 0 with --image, where mflux starts at step max(1, 0) = 1) escapes as a
     traceback with exit 1."""
-    argv = ["--prompt", "x", "--seed", "1", "--steps", "0" if img2img else "-1"]
+    steps = "0" if img2img else "-1"
+    argv = ["--prompt", "x", "--seed", "1", "--steps", steps]
     if img2img:
         argv += ["--image", str(reference_png(tmp_path)), "0.5"]
     err = refused(run_command, argv, capsys)
-    # The library's text has no closing period; the refusal adds one before its own sentence.
-    assert "active_num_steps must be >= 0, got -1. Use more --steps" in err
+    assert too_short(f"no valid step count (--steps {steps})") in err
+    assert "active_num_steps" not in err
 
 
 def test_the_adapters_active_steps_hook_decides_the_window(run_command, teacache, capsys) -> None:
@@ -234,7 +280,7 @@ def test_the_adapters_active_steps_hook_decides_the_window(run_command, teacache
     knows its real step count) is checked against the wrong number."""
     two_steps = dataclasses.replace(z_image.ADAPTER, active_steps=lambda args, model_config: 2)
     err = refused(run_command, ["--prompt", "x", "--seed", "1", "--steps", "20"], capsys, two_steps)
-    assert "active_num_steps=2, nominal_num_inference_steps=20" in err
+    assert too_short("2 of its 20 --steps") in err
 
 
 def test_a_refused_run_prints_no_mflux_option_warnings(run_command, teacache, capsys) -> None:
@@ -262,6 +308,73 @@ def test_the_calibrated_repo_id_is_not_a_custom_checkpoint(run_command, teacache
     assert len(FakeZImage.instances) == 1
 
 
+ORG_BASE_COPIES = [
+    "mflux-community/z-image-base-mflux-q3",
+    "mflux-community/z-image-base-mflux-q4",
+    "mflux-community/z-image-base-mflux-q5",
+    "mflux-community/z-image-base-mflux-q6",
+    "mflux-community/z-image-base-mflux-q8",
+    "mflux-community/z-image-base-mflux-bf16",
+]
+
+
+@pytest.mark.parametrize("repo", ORG_BASE_COPIES)
+def test_a_known_copy_of_the_calibrated_checkpoint_does_not_warn(run_command, teacache, repo) -> None:
+    """Bug: the model-path check compares only against Tongyi-MAI/Z-Image, so the org's own copies of that model at
+    other precisions (each declares base_model: Tongyi-MAI/Z-Image on the Hub) warn on every run; or one id is
+    misspelled in the adapter's list."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", repo])
+    assert FakeZImage.instances[0].init_kwargs["model_path"] == repo
+
+
+def test_no_turbo_copy_is_listed_as_a_copy_of_the_calibrated_checkpoint() -> None:
+    """Bug: a z-image-turbo-* repo (Turbo, a different model) is added to the adapter's known copies of
+    Tongyi-MAI/Z-Image, so a Turbo checkpoint forced through with --base-model z-image runs without the warning."""
+    assert [repo for repo in z_image.ADAPTER.calibrated_copies if "turbo" in repo.lower()] == []
+
+
+TURBO_COPIES = [
+    "mflux-community/z-image-turbo-mflux-q3",
+    "mflux-community/z-image-turbo-mflux-q4",
+    "mflux-community/z-image-turbo-mflux-q5",
+    "mflux-community/z-image-turbo-mflux-q6",
+    "mflux-community/z-image-turbo-mflux-q8",
+    "mflux-community/z-image-turbo-mflux-bf16",
+]
+
+
+@pytest.mark.parametrize(
+    "repo",
+    [
+        # Turbo is a different model: mflux resolves these names to the Turbo config and the command refuses them, so
+        # --base-model z-image forces each through to the checkpoint check.
+        *TURBO_COPIES,
+        "someorg/z-image-base-mflux-q4",
+    ],
+)
+def test_a_lookalike_of_a_known_copy_still_warns(run_command, teacache, repo) -> None:
+    """Bug: the known-copy check matches by substring or suffix ("z-image-base-mflux", "mflux-q4") or ignores the
+    owner, so a Turbo copy loaded as base, or another owner's repo with the same name, runs unannounced."""
+    with pytest.warns(TeaCacheUncalibratedCheckpointWarning, match=re.escape(repo)):
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", repo, "--base-model", "z-image"])
+    assert FakeZImage.instances[0].init_kwargs["model_path"] == repo
+
+
+def test_the_custom_checkpoint_warning_says_what_is_and_is_not_known(run_command, teacache) -> None:
+    """Bug: the warning states as fact that the weights differ, calls another precision of the model fine although
+    only one 8-bit build was measured, drops the note that TeaCache still runs, or loses the repo names, so the user
+    can't tell whether to act."""
+    with pytest.warns(TeaCacheUncalibratedCheckpointWarning) as caught:
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "someorg/my-zimage-finetune"])
+    messages = [str(w.message) for w in caught if issubclass(w.category, TeaCacheUncalibratedCheckpointWarning)]
+    assert messages == [
+        "someorg/my-zimage-finetune may not be Tongyi-MAI/Z-Image, the checkpoint TeaCache's settings were tuned on. "
+        "Skip counts and image quality on it are unmeasured. TeaCache still runs."
+    ]
+
+
 def test_an_uncalibrated_checkpoint_warns_once_and_runs(run_command, teacache, monkeypatch) -> None:
     """Bug: a supported model on a checkpoint its coefficients were not fitted on (VariantInfo.calibrated False; on a
     future Qwen command, Qwen-Image-2512) is refused, runs silently, or warns twice. Z-Image is always calibrated, so
@@ -278,12 +391,14 @@ def test_an_uncalibrated_checkpoint_warns_once_and_runs(run_command, teacache, m
         warnings.simplefilter("always")
         run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "someorg/my-zimage-finetune"])
     messages = [str(w.message) for w in caught if issubclass(w.category, TeaCacheUncalibratedCheckpointWarning)]
-    assert len(messages) == 1
     others = [
         f"{w.category.__name__}: {w.message}" for w in caught if w.category is not TeaCacheUncalibratedCheckpointWarning
     ]
     assert others == []
-    assert "not the checkpoint Z-Image base's TeaCache coefficients were calibrated on" in messages[0]
+    assert messages == [
+        "someorg/my-zimage-finetune is not the checkpoint Z-Image base's TeaCache settings were tuned on. "
+        "Skip counts and image quality on it are unmeasured. TeaCache still runs."
+    ]
     assert len(FakeZImage.instances) == 1
 
 
@@ -338,7 +453,7 @@ def test_a_refused_float16_run_prints_only_the_refusal(run_command, teacache, ca
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         err = refused(run_command, ["--prompt", "x", "--compute-precision", "float16", "--steps", "2"], capsys)
-    assert "Use more --steps" in err
+    assert too_short(2) in err
 
 
 def test_any_non_default_compute_precision_warns_naming_it(run_command, teacache, monkeypatch) -> None:

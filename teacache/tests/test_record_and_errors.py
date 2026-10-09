@@ -1,6 +1,7 @@
 """What a finished, interrupted or failed run leaves behind."""
 
 import json
+import re
 import warnings
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,6 +17,11 @@ from mlx_teacache import TeaCacheUntestedMfluxWarning
 from mflux.extras.teacache import _core
 
 BASE = ["--prompt", "x", "--steps", "5"]
+# This package's version as pyproject.toml declares it: read from the source file, not through the installed
+# metadata the code under test reads.
+PLUGIN_VERSION = re.search(
+    r'^version = "([^"]+)"$', (Path(__file__).parents[1] / "pyproject.toml").read_text(), re.MULTILINE
+).group(1)
 
 
 def sidecar(image_path: Path) -> dict:
@@ -38,8 +44,20 @@ def test_a_committed_generation_records_teacache_in_the_sidecar(run_command, tea
         "teacache_active_steps": 5,
         "teacache_variant": "z-image-base",
         "teacache_version": mlx_teacache.__version__,
+        "teacache_plugin_version": PLUGIN_VERSION,
     }
     assert metadata["seed"] == 7  # mflux's own keys are untouched
+
+
+def test_the_record_names_this_plugins_version_apart_from_the_librarys(run_command, teacache, tmp_path) -> None:
+    """Bug: teacache_plugin_version records mlx-teacache's version (or the source-tree fallback "0+unknown") instead
+    of the installed mflux-teacache, so a sidecar can't tell which command release made the image."""
+    out = tmp_path / "out.png"
+    run_command([*BASE, "--seed", "7", "--make-conf", "--output", str(out)])
+    recorded = teacache_keys(sidecar(out))
+    assert recorded["teacache_plugin_version"] == PLUGIN_VERSION
+    assert recorded["teacache_plugin_version"] != recorded["teacache_version"]
+    assert recorded["teacache_plugin_version"] != "0+unknown"
 
 
 def test_the_teacache_record_keeps_the_options_mflux_recorded(run_command, teacache, tmp_path) -> None:
@@ -56,6 +74,7 @@ def test_the_teacache_record_keeps_the_options_mflux_recorded(run_command, teaca
         "teacache_active_steps",
         "teacache_variant",
         "teacache_version",
+        "teacache_plugin_version",
     }
 
 

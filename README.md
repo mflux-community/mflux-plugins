@@ -8,7 +8,7 @@ Each folder here is its own Python package, with its own tests, version and rele
 
 | Plugin | PyPI package | Module | Commands | Built on | Maintainer | Status |
 |---|---|---|---|---|---|---|
-| [`teacache/`](teacache/) | `mflux-teacache` | `mflux.extras.teacache` | `mflux-generate-z-image-teacache`, more models to follow | [mlx-teacache](https://github.com/IonDen/mlx-teacache) | [@IonDen](https://github.com/IonDen) | 0.1.0 on PyPI |
+| [`teacache/`](teacache/) | `mflux-teacache` | `mflux.extras.teacache` | `mflux-generate-z-image-teacache`, more models to follow | [mlx-teacache](https://github.com/IonDen/mlx-teacache) | [@IonDen](https://github.com/IonDen) | 0.1.1 on PyPI |
 
 The `teacache` plugin is built on [mlx-teacache](https://github.com/IonDen/mlx-teacache) and maintained by [@IonDen](https://github.com/IonDen). On some denoising steps, mlx-teacache predicts that the transformer's output would barely change, and reuses what it computed on an earlier step instead of running the transformer's main blocks again. That can make generation faster. How much faster, and how much the image differs from a normal run, depends on the model and settings; the measurements are in the mlx-teacache repository. The plugin runs mflux's own load and generate steps for each model, with mlx-teacache applied to the loaded model in between, and stops with a clear error for a model or setting mlx-teacache does not support.
 

@@ -32,6 +32,8 @@ from mlx_teacache import (
     match_variant,
 )
 
+from . import __version__ as plugin_version
+
 THRESHOLD_FLAG = "--teacache-threshold"
 # mflux 0.22's --compute-precision (float16 today): any non-default value is allowed for now, with this one
 # warning. Kept in one place so a later switch to a refusal is a small change.
@@ -55,7 +57,10 @@ class Adapter:
       default_active_steps (mflux's own Config.init_time_step).
     - library_checks_checkpoint: True when mlx-teacache's VariantInfo.calibrated already tells a
       custom checkpoint apart (Qwen-Image); it switches off this package's model-path warning so
-      the user sees one warning, not two."""
+      the user sees one warning, not two.
+    - calibrated_copies: repo ids known to hold the calibrated checkpoint's model at other precisions (copies
+      whose model card declares it as base_model); --model-path set to one of them does not warn. TeaCache's
+      settings were measured on one build only, so these run unmeasured, just without the warning."""
 
     command: str
     plain_command: str
@@ -70,6 +75,7 @@ class Adapter:
     after_checks: Callable[[Namespace, ModelConfig], None] | None = None
     active_steps: Callable[[Namespace, ModelConfig], int] | None = None
     library_checks_checkpoint: bool = False
+    calibrated_copies: tuple[str, ...] = ()
 
 
 def add_teacache_arguments(parser: CommandLineParser) -> None:
@@ -124,6 +130,7 @@ def teacache_metadata(handle: TeaCacheHandle, committed_before: int) -> dict[str
         "teacache_active_steps": int(last.num_steps),
         "teacache_variant": str(getattr(handle, "variant_id", "unknown")),
         "teacache_version": str(mlx_teacache_version),
+        "teacache_plugin_version": str(plugin_version),
     }
 
 
@@ -177,10 +184,17 @@ def _refuse_what_teacache_cannot_run(
     try:
         check_step_window(active_num_steps=active_steps, nominal_num_inference_steps=args.steps)
     # TeaCacheValueError: a negative count (--steps -1, or --steps 0 with --image); mflux's --steps has no range check.
+    # The plugin prints its own sentence: the library's text names its internal parameters.
     except (InvalidStepWindowError, TeaCacheValueError) as exc:
-        # The library's texts end with or without a period; print exactly one before the hint.
+        if isinstance(exc, TeaCacheValueError):
+            has = f"no valid step count (--steps {args.steps})"
+        elif active_steps == args.steps:
+            has = f"{active_steps}"
+        else:  # an --image strength (or the adapter's own schedule) left fewer steps than --steps
+            has = f"{active_steps} of its {args.steps} --steps"
         parser.error(
-            f"{str(exc).rstrip('.')}. Use more --steps (or a lower --image strength), "
+            "TeaCache needs at least 3 denoising steps: it always computes the first and the last one. "
+            f"This run has {has}. Use more --steps (or a lower --image strength), "
             f"or run {adapter.plain_command} without TeaCache."
         )
     return variant
@@ -195,18 +209,23 @@ def _warn_unverified_checkpoint(
         shown = model_path or args.model or model_config.model_name
         warnings.warn(
             TeaCacheUncalibratedCheckpointWarning(
-                f"{shown} is not the checkpoint {variant.display_name}'s TeaCache coefficients were calibrated "
-                "on; skip counts and image quality on it are unchecked. TeaCache still runs."
+                f"{shown} is not the checkpoint {variant.display_name}'s TeaCache settings were tuned on. "
+                "Skip counts and image quality on it are unmeasured. TeaCache still runs."
             ),
             stacklevel=3,
         )
         return
-    if adapter.library_checks_checkpoint or model_path is None or model_path == model_config.model_name:
+    if (
+        adapter.library_checks_checkpoint
+        or model_path is None
+        or model_path == model_config.model_name
+        or model_path in adapter.calibrated_copies
+    ):
         return
     warnings.warn(
         TeaCacheUncalibratedCheckpointWarning(
-            f"{model_path} is not {model_config.model_name}, the checkpoint TeaCache's coefficients were "
-            "calibrated on; skip counts and image quality on it are unchecked."
+            f"{model_path} may not be {model_config.model_name}, the checkpoint TeaCache's settings were tuned on. "
+            "Skip counts and image quality on it are unmeasured. TeaCache still runs."
         ),
         stacklevel=3,
     )

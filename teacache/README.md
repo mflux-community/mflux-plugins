@@ -37,7 +37,7 @@ package's command on your path.
 ## Usage
 
 ```bash
-mflux-generate-z-image-teacache --prompt "a lighthouse on a cliff at dusk" --steps 50 --seed 42 -q 8
+mflux-generate-z-image-teacache --prompt "a lighthouse on a cliff at dusk" --steps 50 --guidance 4.0 --seed 42 -q 8
 ```
 
 Every `mflux-generate-z-image` option works the same way. After each image the command prints a line such as
@@ -67,8 +67,11 @@ exit code 2 and a message that points to the plain mflux command. That happens f
   but skips nothing, and TeaCache prints a warning saying so. An image-to-image run counts only the steps it actually
   runs, so a high strength in `--image PATH STRENGTH` can leave too few (strength 1.0 leaves none).
 
-A checkpoint other than the one TeaCache was calibrated on (a finetune, a third-party repo) runs with a warning,
-because the skips may not suit it.
+A checkpoint other than the one TeaCache was tuned on (a finetune, a third-party repo) runs with a warning, because
+the skips may not suit it. The mflux-community copies of `Tongyi-MAI/Z-Image` (`mflux-community/z-image-base-mflux-q3`,
+`-q4`, `-q5`, `-q6`, `-q8` and `-bf16`) are the same model at other precisions (8-bit and lower, or bf16). They run
+without the checkpoint warning. TeaCache's settings were measured only at 8-bit, so on the other precisions its skip
+counts and image quality are unmeasured. The `z-image-turbo-*` copies are Z-Image Turbo, which this command refuses.
 
 If something fails after the model has loaded, the command prints the error's traceback and exits with code 1.
 
@@ -81,6 +84,24 @@ If something fails after the model has loaded, the command prints the error's tr
 Z-Image Turbo is not supported: the command refuses it as an unsupported model. Other model families get a
 command once their mflux command has the same load-and-generate steps.
 
+## What TeaCache was tuned on
+
+TeaCache's settings for Z-Image, the 0.12 default threshold included, come from runs of one recipe: the
+`Tongyi-MAI/Z-Image` checkpoint at 8-bit, 512×512, 50 steps and guidance 4.0. The example under Usage uses the same
+steps and guidance, but mflux's default size of 1024×1024. Leave out `--guidance` and mflux 0.22 runs Z-Image at
+guidance 0, with classifier-free guidance off.
+
+The settings were fitted on mflux's float32 hidden stream. mflux 0.22 runs Z-Image in bfloat16 by default. There, the
+same recipe skipped 12 of 48 active steps instead of 15, at an SSIM of 0.990 against plain mflux (SSIM scores image
+similarity; 1.0 means identical), according to the
+[Z-Image page](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/z-image-base.md) in the mlx-teacache
+repository. Add `--float32` to run on the stream the settings were fitted on.
+
+Other guidance values, step counts, sizes, LoRAs and precisions all run. How many steps TeaCache skips there, and
+how close the image stays to a plain mflux run, has not been measured. The command doesn't warn about these, apart
+from the short step counts described under Usage. It warns about the checkpoint only when it is neither
+`Tongyi-MAI/Z-Image` nor one of the copies listed under Usage, and it warns about `--compute-precision`.
+
 ## What it changes
 
 The command patches the loaded model in memory. For Z-Image it replaces the model's prediction step with
@@ -88,10 +109,10 @@ mlx-teacache's gated version. Nothing on disk changes, and mflux's own commands 
 shell completions list only mflux's own commands.
 
 Each image records what TeaCache did, next to mflux's usual metadata: `teacache_threshold`,
-`teacache_skipped_steps`, `teacache_active_steps`, `teacache_variant` and `teacache_version` (the mlx-teacache
-version). Replaying a TeaCache image with plain mflux and `-C` produces the plain run, without TeaCache. Replaying
-it with this command uses the model's default threshold unless you pass `--teacache-threshold` again, because the
-`teacache_*` keys are not read back.
+`teacache_skipped_steps`, `teacache_active_steps`, `teacache_variant`, `teacache_version` (the mlx-teacache
+version) and `teacache_plugin_version` (the mflux-teacache version). Replaying a TeaCache image with plain mflux and
+`-C` produces the plain run, without TeaCache. Replaying it with this command uses the model's default threshold
+unless you pass `--teacache-threshold` again, because the `teacache_*` keys are not read back.
 
 For measured speedups and image comparisons, see the
 [mlx-teacache README](https://github.com/IonDen/mlx-teacache#readme).
