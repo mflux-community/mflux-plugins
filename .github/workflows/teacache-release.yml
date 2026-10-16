@@ -59,7 +59,7 @@ jobs:
 
   build:
     needs: [verify, test]
-    runs-on: macos-14
+    runs-on: macos-15
     defaults:
       run:
         working-directory: teacache
@@ -96,7 +96,7 @@ jobs:
     # Installs the built wheel the way `pip install mflux-teacache` does: no lock, so the newest mflux and mlx-teacache
     # the requirements allow. Then runs the offline test suite against that installed package, not against src/.
     needs: [verify, build]
-    runs-on: macos-14  # the test job's runner image; MLX has no Linux wheel
+    runs-on: macos-15  # the test job's runner image; MLX has no Linux wheel
     defaults:
       run:
         working-directory: teacache
