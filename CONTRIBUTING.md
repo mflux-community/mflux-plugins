@@ -26,8 +26,8 @@ A new plugin is accepted when it meets all of these:
 4. It starts from `template/`. The template's tests pass in renamed form, no test downloads weights, warnings are
    errors, and every test's docstring starts with `Bug:`.
 5. `scripts/check_plugins.py` passes.
-6. A named maintainer has the folder's line in `.github/CODEOWNERS` and answers its issues. mflux's maintainers are
-   not expected to support it.
+6. A named maintainer has the folder's line in `.github/CODEOWNERS` and answers its issues. mflux's maintainers review
+   its pull requests but are not expected to support it.
 7. Its README covers install, usage and the mflux versions it works with, and it has a `CHANGELOG.md` (reviewers
    check this; the checker does not).
 8. Any speed or quality number it states comes from a reproducible benchmark committed in the library it wraps.
@@ -44,9 +44,12 @@ A new plugin starts as a renamed copy of `template/`. The steps are under "Start
 [template/README.md](template/README.md). The folder name sets every other name. The rules and a table
 are in the guide's [Names](docs/writing-a-plugin.md#names) section.
 
-If you add a plugin, add a `/<folder>/ @<your-handle>` line to `.github/CODEOWNERS` and a row to the Plugins table in
-the root `README.md`. The checker fails without either. The CODEOWNERS line makes pull requests for that folder ask
-you for review. The `* @IonDen` line stays: it is the default owner of every file that no later line matches.
+If you add a plugin, add a line for its folder to `.github/CODEOWNERS` and a row to the Plugins table in the root
+`README.md`. The checker fails without either. The line is `/<folder>/ @<your-handle>`, followed by the handles from
+the `*` line, which are the repository maintainers. GitHub uses only the last line that matches a file. Without those
+handles you would be the folder's only code owner, and nobody else could approve your pull requests. A second
+maintainer's handle goes after yours. GitHub ignores a handle that has no write access to this repository, so ask an
+admin to give it.
 
 `scripts/check_plugins.py` checks each plugin folder's layout, names, license, mflux range and workflows. Run it from
 the repository root:
@@ -67,10 +70,10 @@ uv run --python 3.13 --no-project scripts/check_plugins.py
 - Fill in the pull request template.
 
 Changes reach `main` only through pull requests. A pull request merges when the `repo` check (the `lint` workflow)
-passes, its plugin's `test` job is green, and a code owner other than the author approves it. When the author is
-the folder's only code owner, a repository admin reviews and merges the pull request. Each plugin folder belongs to
-its maintainer. `.github/`, `scripts/`, `template/` and the files at the root belong to the repository's
-maintainers, so a change to a plugin's workflows needs their approval too.
+passes, its plugin's `test` job is green, and a code owner other than the author approves it. Nobody approves their own
+pull request. Each plugin folder belongs to its maintainer and the repository maintainers. `.github/`, `scripts/`,
+`template/` and the files at the root belong to the repository's maintainers, so a change to a plugin's workflows needs
+their approval too.
 
 ## CI
 

@@ -1,5 +1,5 @@
-* @IonDen
-/teacache/ @IonDen
-/.github/ @IonDen
-/scripts/ @IonDen
-/template/ @IonDen
+# GitHub applies only the last line that matches a file. Each folder line names the folder's maintainer, then
+# the repository maintainers from the "*" line. So someone other than the author can always approve.
+* @IonDen @ianscrivener @anthonywu @fxd0h @filipstrand @plz12345 @azrahello
+/teacache/ @IonDen @ianscrivener @anthonywu @fxd0h @filipstrand @plz12345 @azrahello
+/template/ @IonDen @ianscrivener @anthonywu @fxd0h @filipstrand @plz12345 @azrahello
