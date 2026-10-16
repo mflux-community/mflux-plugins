@@ -30,7 +30,7 @@ defaults:
 jobs:
   test:
     # MLX has no Linux wheel, so every job that installs it runs on macOS.
-    runs-on: macos-14
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -59,7 +59,7 @@ jobs:
     # fails for real, so GitHub sends its failure notice.
     if: ${{ !inputs.blocking-only }}
     continue-on-error: ${{ github.event_name != 'schedule' }}
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       UV_PYTHON: "3.13"
     steps:
@@ -95,7 +95,7 @@ jobs:
     # requests and pushes; the daily scheduled run fails for real.
     if: ${{ !inputs.blocking-only }}
     continue-on-error: ${{ github.event_name != 'schedule' }}
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       UV_PYTHON: "3.13"
     steps:
