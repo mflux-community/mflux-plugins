@@ -29,8 +29,8 @@ describes the rules, and [docs/writing-a-plugin.md](../docs/writing-a-plugin.md)
    `mlx-<folder>` or `mlx_<folder>`: the package in `uv pip show`, the `-W` filter for its warning and the comments
    about it. Before the first `<folder>-v*` tag, an org admin sets up the release; the steps are under "For maintainers"
    in [CONTRIBUTING.md](../CONTRIBUTING.md#for-maintainers-a-new-plugin-folder).
-7. Add a line `/<folder>/ @<your-handle>` to `.github/CODEOWNERS` and a row to the Plugins table in the root
-   `README.md`.
+7. Add a line `/<folder>/ @<your-handle>` to `.github/CODEOWNERS`, followed by the handles on the `*` line of that
+   file. Add a row to the Plugins table in the root `README.md`.
 8. Rewrite this README for your plugin, the docstring of `src/mflux/extras/<folder>/__init__.py` (`help()` shows
    it), and in `AGENTS.md` the paragraphs above "Namespace contract" and the CI section.
 9. From the repository root, run the checker:

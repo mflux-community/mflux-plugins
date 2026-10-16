@@ -58,8 +58,8 @@ body:
     attributes:
       label: Maintainer
       description: >-
-        The GitHub handle that will own the plugin's folder in CODEOWNERS. With one maintainer, a repository admin
-        reviews the folder's pull requests.
+        The GitHub handle that will own the plugin's folder in CODEOWNERS. The repository maintainers are code owners
+        of every folder too, so one of them can review your pull requests.
       placeholder: "@your-handle"
     validations:
       required: true
@@ -67,7 +67,7 @@ body:
     id: second-maintainer
     attributes:
       label: Second maintainer
-      description: Optional. A second handle lets a code owner other than the author review pull requests.
+      description: Optional. A second handle for the folder's CODEOWNERS line, who also answers the plugin's issues.
       placeholder: "@other-handle"
     validations:
       required: false

@@ -81,7 +81,7 @@ only, starts with a letter and is not a Python keyword.[^folder]
 | Release tag | `<name>-v<version>` | `foobar-v0.1.0` |
 | GitHub environment for PyPI | `pypi-<name>` | `pypi-foobar` |
 | Workflows | `<name>.yml` and `<name>-release.yml` | `.github/workflows/foobar.yml` |
-| CODEOWNERS line | `/<name>/ @<handle>` | `/foobar/ @your-handle` |
+| CODEOWNERS line | `/<name>/ @<handle>` + the `*` line's handles | `/foobar/ @your-handle` + those handles |
 
 Before you pick a name, check the Plugins table in the root [README.md](../README.md) and PyPI for `mflux-<name>`.
 
@@ -276,8 +276,8 @@ request, but the scheduled run fails for real, so GitHub notifies you. If its dr
 A plugin whose library has a public `main` branch can add a `<library>-main` job that works the same way; teacache
 has one for mlx-teacache.
 
-Workflow files live in `.github/`, which CODEOWNERS assigns to the repository's maintainers. A change to your
-workflows needs their review. The merge rules are under "Pull requests" in [CONTRIBUTING.md](../CONTRIBUTING.md).
+Workflow files live in `.github/`, which the `*` line in CODEOWNERS assigns to the repository's maintainers. A change to
+your workflows needs their review. The merge rules are under "Pull requests" in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Try a branch before it is released
 
