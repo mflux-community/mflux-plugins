@@ -68,6 +68,8 @@ uv run --python 3.13 --no-project scripts/check_plugins.py
 - Change a drift-test digest only after you have read mflux's diff and brought the plugin in line with it. Name the
   mflux commit in the pull request.
 - Fill in the pull request template.
+- Coding agents can use the `mflux-plugin-pr` skill (`.cursor/skills/mflux-plugin-pr/SKILL.md`) to fill in the pull
+  request template.
 
 Changes reach `main` only through pull requests. A pull request merges when the `repo` check (the `lint` workflow)
 passes, its plugin's `test` job is green, and a code owner other than the author approves it. Nobody approves their own

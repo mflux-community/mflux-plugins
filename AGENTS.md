@@ -20,7 +20,8 @@ it before you change that folder. Before you write or change a plugin, read `doc
   command suffix `-<folder>`, the tags `<folder>-v*` and the environment `pypi-<folder>`.
 - `scripts/check_plugins.py` checks every plugin folder's layout, names, license, mflux range and workflow wiring in
   the `lint` job. Before you push, run it from the repository root:
-  `uv run --python 3.13 --no-project scripts/check_plugins.py`.
+  `uv run --python 3.13 --no-project scripts/check_plugins.py`, and
+  `uv run --python 3.13 --no-project scripts/check_skills.py` when a skill changed.
 - A change to a generic part of a plugin (the pyproject tool blocks, the conftest guards, the namespace, wheel,
   isolation or drift tests, the test or release workflow) is also made in `template/`, in the same pull request.
 - Releases: a tag `<folder>-v<version>` on `main`, equal to the plugin's `project.version`, publishes through
@@ -29,3 +30,8 @@ it before you change that folder. Before you write or change a plugin, read `doc
   and the PyPI pending publisher.
 - One plugin per pull request. A `template/` change that the plugin change needs rides along in that plugin's pull
   request.
+
+## Skills
+
+- `mflux-plugin-scaffold`: starting a new plugin or adding a command to one. See `.cursor/skills/mflux-plugin-scaffold/SKILL.md`.
+- `mflux-plugin-pr`: opening a pull request or releasing a plugin. See `.cursor/skills/mflux-plugin-pr/SKILL.md`.
