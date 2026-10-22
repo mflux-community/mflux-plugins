@@ -41,5 +41,7 @@ jobs:
           done
       - name: Plugin folders follow the repository rules
         run: uv run --python 3.13 --no-project scripts/check_plugins.py
-      - name: Tests of the plugin checker
+      - name: Agent skills follow the repository rules
+        run: uv run --python 3.13 --no-project scripts/check_skills.py
+      - name: Tests of the repository checkers
         run: uvx --python 3.13 --from 'pytest==9.1.1' pytest -W error -p no:cacheprovider -o pythonpath=scripts scripts -q
