@@ -134,7 +134,11 @@ dests, the part of `main()` after `load()` and the step signatures, and it check
 
 ## Dependencies and version pins
 
-- The only runtime dependency is `mflux>=0.22`. Add your library next to it with its own lower bound.
+- The runtime dependencies are `mflux>=0.22` and `pillow<13`. Add your library next to them with its own lower bound.
+- `pillow<13` is temporary: every mflux release up to 0.23.0 imports `PIL._typing`, which pillow 13 removed, so a
+  fresh install on Python 3.11 or newer would fail at `import mflux`. mflux PR 890
+  (https://github.com/mflux-community/mflux/pull/890) fixes it on main. Once an mflux release carries the fix, drop
+  the cap and its test in `tests/test_wheel.py`.
 - A requirement on `mflux` is a lower bound only. Never give it an upper bound here, because a newer mflux runs and
   warns. `tests/test_wheel.py` checks this.
 - Dependencies come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed
