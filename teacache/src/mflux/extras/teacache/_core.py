@@ -51,8 +51,8 @@ class Adapter:
     only what its mirrored command does around them:
     - before_validate(args): right after parsing and the threshold check, before validate (no current
       adapter uses it).
-    - after_checks(args, model_config): after TeaCache's refusals, before load (Z-Image: mflux's
-      guidance and negative-prompt warnings), so a refused run prints one message.
+    - after_checks(args, model_config): after TeaCache's refusals, before load (Z-Image: warn_before_load,
+      mflux's tiling, guidance and negative-prompt warnings), so a refused run prints one message.
     - active_steps(args, model_config): the denoising steps mflux will run; None uses
       default_active_steps (mflux's own Config.init_time_step).
     - library_checks_checkpoint: True when mlx-teacache's VariantInfo.calibrated already tells a

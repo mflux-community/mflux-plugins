@@ -69,8 +69,9 @@ It adds only the optional hooks its command needs:
   handle from `apply` and the state from `before_generate`. Add your record to a new `generation_parameters` dict;
   don't change the one the image holds.
 
-The Z-Image adapter's `after_checks` hook (`warn_ineffective_options`) copies a block of statements from mflux's
-`main()`, because mflux has no `prepare()` step for it yet. Code copied from mflux is listed in `NOTICE`; a new adapter
+The Z-Image adapter's `after_checks` hook (`warn_before_load`) calls mflux's tiling warning where that mflux has one,
+then `warn_ineffective_options`, which copies a block of statements from mflux's `main()`, because mflux has no
+`prepare()` step for it yet. Code copied from mflux is listed in `NOTICE`; a new adapter
 that copies more adds its file there.
 
 ## Compile and memory
@@ -107,16 +108,24 @@ that copies more adds its file there.
 
 ## When the drift test fails
 
-`tests/test_mflux_drift.py` pins mflux's Z-Image `build_parser()`, `main()`, `ZImage.generate_image`,
-`ZImage._predict` and `AppleSiliconUtil.is_m1_or_m2` by AST digest. It also pins the parser's option strings and
-dests, the part of `main()` after `load()` and the step signatures, and it checks that the copied block still matches
-`main()`. When an mflux update turns it red:
+`tests/test_mflux_drift.py` pins mflux's Z-Image `build_parser()`, `main()`, `ZImageCommand.load`,
+`ZImage.generate_image`, `ZImage._predict` and `AppleSiliconUtil.is_m1_or_m2` by AST digest. It also pins the
+parser's option strings and dests, the part of `main()` after `load()` and the step signatures, and it checks that
+the copied block still matches `main()`. Each pinned value is recorded under a label that names the mflux source it
+was reviewed against: the releases the package supports, and the mflux `main` commit that was last reviewed. Each
+label also lists the versions that source reports (`REPORTED_VERSIONS`). A value no label holds fails. So does a mix
+of values from different labels, and so does an installed mflux whose version the matched label does not list (a
+new release that ships the reviewed `main` code, for example). When an mflux update turns it red:
 
 1. Read mflux's diff of `src/mflux/models/z_image/cli/z_image_generate.py`.
 2. Bring `z_image.py` (and `_core.run`, if the flow after `load()` changed) in line with it. A new parser option
-   that changes what the plugin must refuse needs a refusal and an entry in the refusal tests.
+   that changes what the plugin must refuse needs a refusal and an entry in the refusal tests. Code that uses
+   something only the newer mflux has must still import and run on the oldest supported release.
 3. If `ZImage.generate_image` changed, bring `FakeZImage.generate_image` in `tests/_fakes.py` in line with it.
-4. Record the digest the failure message prints. Never update a digest without step 1.
+4. Record the values the failure messages print under a label naming the mflux source you reviewed: the release
+   (`mflux v.0.24.0 released`), or the `main` commit and the review date (`mflux main <commit>, reviewed <date>`),
+   with the versions that source reports. A newer `main` commit replaces the older `main` label; a release keeps its
+   label while the package supports it. Never record a value without step 1.
 
 ## Tests
 
