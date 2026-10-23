@@ -1,4 +1,10 @@
-/CLAUDE.md
+CLAUDE.local.md
+.claude/*
+!.claude/skills/
+!.claude/settings.json
+.claude/settings.local.json
+tmp-PR-content.md
+tmp-PR-body.md
 .codegraph/
 docs/superpowers/
 .venv/
