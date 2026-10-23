@@ -36,6 +36,9 @@ classifiers = [
 dependencies = [
     # A floor only: the first mflux whose command steps this plugin calls. Never an upper bound.
     "mflux>=0.22",
+    # Every mflux release up to 0.23.0 imports PIL._typing, which pillow 13 removed. mflux PR 890
+    # (https://github.com/mflux-community/mflux/pull/890) fixes it on main; drop this cap once a release carries it.
+    "pillow<13",
     # Add the library your plugin wraps here, from PyPI, for example "<library>>=X.Y".
 ]
 

@@ -4,6 +4,20 @@ All notable changes to mflux-teacache are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2]
+
+### Changed
+
+- Requires mlx-teacache 0.14.0 or newer (was 0.13.2). It lists mflux 0.23 as checked, so the command no longer warns
+  on mflux 0.23, and its `[mflux]` extra allows mflux below 0.26.
+
+### Fixed
+
+- A fresh `pip install mflux-teacache` on Python 3.11 or newer picked Pillow 13, and the command then failed at
+  `import mflux`: every mflux release up to 0.23.0 imports `PIL._typing`, which Pillow 13.0 removed. The package now
+  requires Pillow below 13 until an mflux release carries the fix
+  ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)).
+
 ## [0.1.1]
 
 ### Added

@@ -62,6 +62,22 @@ def test_wheel_declares_the_command_and_an_mflux_floor_without_a_cap(wheel: zipf
     assert not operators & {"<", "<=", "==", "===", "~="}, f"{mflux} has an upper bound or a pin"
 
 
+def test_wheel_keeps_pillow_below_13(wheel: zipfile.ZipFile) -> None:
+    """Bug: the pillow<13 cap is dropped or narrowed by a marker, so a plugin made from this template installs pillow
+    13 on Python 3.11 or newer, where every mflux release up to 0.23.0 fails at import. Delete this test together with
+    the cap once an mflux release carries mflux PR 890."""
+    requires = [
+        Requirement(line.split(":", 1)[1].strip())
+        for line in wheel.read(f"{dist_info(wheel)}/METADATA").decode().splitlines()
+        if line.startswith("Requires-Dist:")
+    ]
+    pillows = [r for r in requires if r.name == "pillow"]
+    assert len(pillows) == 1, f"expected one pillow requirement, got {[str(r) for r in pillows]}"
+    (pillow,) = pillows
+    assert str(pillow.specifier) == "<13"
+    assert pillow.marker is None, f"{pillow} applies to some Pythons only"
+
+
 def test_wheel_carries_the_license_and_the_mflux_notice(wheel: zipfile.ZipFile) -> None:
     """Bug: license-files drops NOTICE (or the build falls back to license = { file = "LICENSE" }), so the wheel
     ships statements copied from mflux's MIT-licensed main() without mflux's copyright notice."""

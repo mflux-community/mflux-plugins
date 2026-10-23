@@ -120,12 +120,13 @@ For measured speedups and image comparisons, see the
 ## Versions
 
 - Python 3.10 or newer, on Apple Silicon.
-- mflux 0.22 or newer. The upper limit comes from mlx-teacache: its `[mflux]` extra allows mflux below 0.25. A newer
+- mflux 0.22 or newer. The upper limit comes from mlx-teacache: its `[mflux]` extra allows mflux below 0.26. A newer
   mflux needs a newer mlx-teacache first; until then the installer keeps or picks an older mflux. mflux 0.21 and
   earlier set the Z-Image scheduler default outside the parser this command reuses, so the command would not get it.
-- mlx-teacache 0.13.2 or newer, the first release that lists mflux 0.22 as checked. This package adds no upper limit
-  of its own. On an mflux newer than the newest one mlx-teacache was checked against, the command runs and prints a
-  warning.
+- mlx-teacache 0.14.0 or newer, which lists mflux 0.22 and 0.23 as checked. This package adds no upper limit of its
+  own. On an mflux newer than the newest one mlx-teacache was checked against, the command runs and prints a warning.
+- Pillow below 13. Every mflux release up to 0.23.0 fails to import with Pillow 13, and this cap keeps a fresh install
+  working on Python 3.11 and newer. It goes once an mflux release ships the fix.
 
 mflux's other options, `--float32` included, pass through unchanged.
 
