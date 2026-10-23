@@ -118,15 +118,21 @@ red:
 
 ## Dependencies and version pins
 
-- Runtime dependencies: `mlx-teacache[mflux]>=0.13.2` and `mflux>=0.22`.
-- The mflux upper bound comes from mlx-teacache's extra: below 0.25 with mlx-teacache 0.13.2. The direct `mflux`
+- Runtime dependencies: `mlx-teacache[mflux]>=0.14.0`, `mflux>=0.22` and `pillow<13`.
+- The mflux upper bound comes from mlx-teacache's extra: below 0.26 with mlx-teacache 0.14.0. The direct `mflux`
   requirement is a lower bound only: 0.22 is the first mflux whose Z-Image parser sets the scheduler default itself.
   Never give an mflux requirement an upper bound here, because a newer mflux runs and warns. `tests/test_wheel.py`
   checks this.
-- mlx-teacache 0.13.2 is the first release that records mflux 0.22 as checked, and it follows mflux 0.22's
-  bfloat16 Z-Image stream. It prints no warning on mflux 0.22, and the weight-free test in
-  `tests/test_real_teacache.py` runs with warnings as errors to show that.
-- Both come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed
+- mlx-teacache 0.14.0 records mflux 0.22 and 0.23 as checked, and it follows mflux 0.22's bfloat16 Z-Image
+  stream. It prints no warning on either. The weight-free test in `tests/test_real_teacache.py` runs with warnings as
+  errors to show that for the locked mflux (0.22.0); the release job's wheel test installs the newest mflux.
+- `pillow<13` is temporary: every mflux release up to 0.23.0 imports `PIL._typing`, which pillow 13 removed, so a
+  fresh install on Python 3.11 or newer would fail at `import mflux`. mflux PR 890
+  (https://github.com/mflux-community/mflux/pull/890) fixes it on main. Nothing moves the lock by itself: when you
+  upgrade it past mflux 0.23.0, a test in `tests/test_wheel.py` fails. If that release carries the fix, drop the cap
+  here and in `template/pyproject.toml`, delete the pillow tests in both folders, and release, because every
+  published version keeps its cap.
+- All of them come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed
   file.
 - `ruff` and `ty` are pinned exactly. After you change `pyproject.toml`, run `uv lock` and
   commit `uv.lock`.

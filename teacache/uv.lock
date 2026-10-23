@@ -1409,11 +1409,12 @@ wheels = [
 
 [[package]]
 name = "mflux-teacache"
-version = "0.1.1"
+version = "0.1.2"
 source = { editable = "." }
 dependencies = [
     { name = "mflux" },
     { name = "mlx-teacache", extra = ["mflux"] },
+    { name = "pillow" },
 ]
 
 [package.dev-dependencies]
@@ -1426,7 +1427,8 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mflux", specifier = ">=0.22" },
-    { name = "mlx-teacache", extras = ["mflux"], specifier = ">=0.13.2" },
+    { name = "mlx-teacache", extras = ["mflux"], specifier = ">=0.14.0" },
+    { name = "pillow", specifier = "<13" },
 ]
 
 [package.metadata.requires-dev]
@@ -1551,15 +1553,15 @@ wheels = [
 
 [[package]]
 name = "mlx-teacache"
-version = "0.13.2"
+version = "0.14.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mlx", version = "0.32.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
     { name = "mlx", version = "0.32.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/54/6a/8b32f880beabd374e1b5b13756a7570e3bbf44e3537f44ec19df52f99dcd/mlx_teacache-0.13.2.tar.gz", hash = "sha256:df607b55ece76cbb7e7f1b032972c4048fcdc405d545f30a0d72cdfb4f65feb9", size = 1240914, upload-time = "2026-10-08T16:38:02.067Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/55/00d52eb193b46157a7a71af610ddcbde6244d5ba4a038865da019f942d4a/mlx_teacache-0.14.0.tar.gz", hash = "sha256:32fbed4e50d7b55bbbe59ca55038fc716e38f9ee389bc0dd82a91de7de0874b4", size = 1266390, upload-time = "2026-10-22T19:09:40.189Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/88/18/0518d43fb62ce80330465f1c667fee1d37624923dd612279ce275ba49132/mlx_teacache-0.13.2-py3-none-any.whl", hash = "sha256:3d61d52089684ad0ff39619ef8ab735f404f437d1521b5a6a0139e8364fc9f6f", size = 115260, upload-time = "2026-10-08T16:38:00.18Z" },
+    { url = "https://files.pythonhosted.org/packages/be/9d/83aa3f9216c084b99247dc8171d7303b2ec7c00d7980e74eceac1c82d6f0/mlx_teacache-0.14.0-py3-none-any.whl", hash = "sha256:a6371b6034ac588cc6ef67987c9286e5e58904089c9e3df2d1c3543df86a6609", size = 122945, upload-time = "2026-10-22T19:09:38.751Z" },
 ]
 
 [package.optional-dependencies]

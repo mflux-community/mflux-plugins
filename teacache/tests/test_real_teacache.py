@@ -84,7 +84,7 @@ def test_the_skipped_steps_the_real_library_decides_are_the_ones_the_image_recor
     """Bug: the record counts a label the real gate never writes for a skipped step, so every image says it skipped
     0 steps. Caller coefficients are not clamped to a calibrated range: a polynomial that predicts almost no change
     keeps the accumulator under the threshold, so the real gate skips most steps between the forced first and last
-    (forced, computed, skipped, skipped, skipped, forced on mlx-teacache 0.13.2)."""
+    (forced, computed, skipped, skipped, skipped, forced on mlx-teacache 0.14.0)."""
     _, handle, recorded = _run_with_the_real_library(
         run_command, monkeypatch, tmp_path, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4)
     )
