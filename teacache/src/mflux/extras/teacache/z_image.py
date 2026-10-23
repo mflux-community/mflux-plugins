@@ -11,6 +11,13 @@ from mflux.models.z_image.variants.z_image import ZImage
 
 from ._core import Adapter, add_teacache_arguments, run
 
+try:  # Not in the mflux 0.22.0 / 0.23.0 releases, which the locked environment type-checks against.
+    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions  # ty: ignore[unresolved-import]
+except ModuleNotFoundError as exc:
+    if exc.name != "mflux.models.common.vae.vae_decode_options":
+        raise  # the module is there and broken: fail loudly, never run without its warning
+    VAEDecodeOptions = None  # the mflux 0.22.0 / 0.23.0 releases: the Z-Image decode honours --vae-tiling
+
 __all__ = [
     "ADAPTER",
     "CONDITIONAL_OPTIONS",
@@ -18,6 +25,7 @@ __all__ = [
     "PIPELINE",
     "build_parser",
     "main",
+    "warn_before_load",
     "warn_ineffective_options",
 ]
 
@@ -58,6 +66,16 @@ def warn_ineffective_options(args: Namespace, model_config: ModelConfig) -> None
         )
 
 
+def warn_before_load(args: Namespace, model_config: ModelConfig) -> None:
+    """mflux's pre-load warnings for Z-Image, in the order its main() gives them: first, on an mflux whose decode
+    ignores --vae-tiling, the warning about that flag, then the guidance and negative-prompt warnings. It runs after
+    TeaCache's checks, not right after parsing as in mflux's main(), so a run TeaCache refuses prints only the
+    refusal."""
+    if VAEDecodeOptions is not None:
+        VAEDecodeOptions.warn_encode_only_tiling()
+    warn_ineffective_options(args, model_config)
+
+
 # Z-Image needs one optional hook (after_checks); active_steps keeps the Config-based default, and
 # mlx-teacache has no checkpoint check for Z-Image, so this package's own model-path warning applies,
 # except on the known copies of the calibrated checkpoint.
@@ -71,7 +89,7 @@ ADAPTER = Adapter(
     load=ZImageCommand.load,
     generate=ZImageCommand.generate,
     latent_creator=ZImageCommand.latent_creator,
-    after_checks=warn_ineffective_options,
+    after_checks=warn_before_load,
     # The org's copies of Tongyi-MAI/Z-Image at other precisions (q3 to q8 quantized, bf16 not): each model card
     # declares base_model: Tongyi-MAI/Z-Image (checked on the Hub 2026-10-09). TeaCache's settings were measured on
     # one 8-bit build only. The z-image-turbo-* copies hold Turbo, a different model, and are not here.

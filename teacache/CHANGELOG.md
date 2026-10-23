@@ -4,6 +4,15 @@ All notable changes to mflux-teacache are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- On an mflux that has the new Z-Image decode options (mflux main after the 0.23.0 release), `--vae-tiling` and
+  `--vae-tile-size` no longer tile the decode, and the command prints mflux's own warning that they change only the
+  encode of an input image, as `mflux-generate-z-image` does. A run that TeaCache refuses prints only the refusal.
+  The mflux 0.22.0 and 0.23.0 releases still tile the decode, and there the command prints nothing new.
+
 ## [0.1.2]
 
 ### Changed

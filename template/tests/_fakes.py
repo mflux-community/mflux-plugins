@@ -14,6 +14,25 @@ from mflux.models.z_image.variants.z_image import ZImage
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.image_util import ImageUtil
 
+try:  # Not in the mflux 0.22.0 / 0.23.0 releases, which the locked environment type-checks against.
+    from mflux.models.common.vae.block_decoder import VAEBlockDecoder  # ty: ignore[unresolved-import]
+    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions  # ty: ignore[unresolved-import]
+except ModuleNotFoundError as exc:
+    if exc.name not in ("mflux.models.common.vae.block_decoder", "mflux.models.common.vae.vae_decode_options"):
+        raise
+    VAEBlockDecoder = None  # the mflux 0.22.0 / 0.23.0 releases: one Z-Image decode, nothing to record about it
+    VAEDecodeOptions = None
+
+
+class FakeVAE:
+    """Stands in for ZImage.vae, which only the decode reads. On an mflux with VAEDecodeOptions it carries the decode
+    mode ZImageInitializer sets (row strips) for VAEDecodeOptions.apply to switch; the mflux 0.22.0 /
+    0.23.0 releases have no decode mode."""
+
+    def __init__(self) -> None:
+        if VAEBlockDecoder is not None:
+            self.decode_mode = VAEBlockDecoder.LOW_MEMORY
+
 
 class FakeZImage:
     """Stands in for ZImage. Construction is what ZImageCommand.load() does, so an empty
@@ -21,7 +40,8 @@ class FakeZImage:
     0.22's ZImage.generate_image does (guidance forced to 0.0 on a model without guidance, the scheduler
     default resolved, a real Config, the real ImageUtil.to_image with the same keywords), so a save
     writes a real PNG and a real JSON sidecar with the fields mflux writes: steps, guidance, image_path,
-    image_strength, pid_*, and float32 / compute_precision in generation_parameters.
+    image_strength, pid_*, and float32 / compute_precision (and, on an mflux that records it, vae_full_precision)
+    in generation_parameters.
 
     Two fields are simpler than the real ones, safe because no test here reads them back:
     lora_paths / lora_scales are the values passed to __init__ (the real LoRALoader resolves
@@ -46,6 +66,7 @@ class FakeZImage:
         self.lora_scales = bound.arguments["lora_scales"]
         self.callbacks = CallbackRegistry()
         self.tiling_config = None
+        self.vae = FakeVAE()
         self.generate_calls: list[dict[str, Any]] = []
         # The generation_parameters dict each returned image held, kept by identity: the image may share it.
         self.returned_parameters: list[dict[str, Any]] = []
@@ -94,6 +115,7 @@ class FakeZImage:
             generation_parameters={
                 **({"float32": True} if self.float32 else {}),
                 **self.compute_precision.generation_parameters(),
+                **(VAEDecodeOptions.generation_parameters(self) if VAEDecodeOptions is not None else {}),
             },
         )
         self.returned_parameters.append(image.generation_parameters)
