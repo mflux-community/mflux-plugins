@@ -34,24 +34,29 @@ from mflux.extras.teacache import z_image
 HAS_DECODE_OPTIONS = importlib.util.find_spec("mflux.models.common.vae.vae_decode_options") is not None
 
 # The reviewed mflux sources. The released digests were recorded on PyPI 0.22.0 (commit 31c9640); v.0.23.0 has the
-# same z_image_generate.py, variants/z_image.py and cli/parser/parsers.py. Every digest is the same on CPython 3.10,
-# 3.13 and 3.14.
+# same z_image_generate.py, variants/z_image.py and cli/parser/parsers.py. CI checks every digest on CPython 3.11 and
+# 3.13.
 RELEASED = "mflux v.0.22.0 / v.0.23.0 released"
 # main a3b21fc: --vae-full-precision in build_parser, VAEDecodeOptions.warn_encode_only_tiling() in main() (mirrored
 # by z_image.warn_before_load), VAEDecodeOptions.generation_parameters in ZImage.generate_image (mirrored by
 # FakeZImage). ZImageCommand.load applies the decode mode itself, and the flow after load() is unchanged.
 MAIN = "mflux main a3b21fc, reviewed 2026-10-23"
+# PyPI 0.24.0 (tag v.0.24.0, commit 8a7fd0a), reviewed 2026-10-28 on CPython 3.13. Against main a3b21fc it leaves
+# z_image_generate.py, variants/z_image.py and VAEDecodeOptions unchanged. Its parsers.py adds add_cfg_end_arguments
+# (not called by the Z-Image parser), a bake_by_default parameter on add_lora_arguments (default True, as before) and
+# a -C replay of bake_lora; none of it moves a pin here.
+RELEASED_0_24 = "mflux v.0.24.0 released"
 # The versions each reviewed source reports. mflux main a3b21fc still reports 0.23.0, so the version alone cannot tell
 # it from the release; a release that ships main's code reports a version its label does not list.
-REPORTED_VERSIONS = {RELEASED: ("0.22.0", "0.23.0"), MAIN: ("0.23.0",)}
+REPORTED_VERSIONS = {RELEASED: ("0.22.0", "0.23.0"), MAIN: ("0.23.0",), RELEASED_0_24: ("0.24.0",)}
 
-BUILD_PARSER_DIGESTS = {RELEASED: "664a51c06e0e4b7a", MAIN: "6a85a43cc52fd44f"}
-MAIN_DIGESTS = {RELEASED: "38cfe3fe3f1142f7", MAIN: "1f3058eda927d0fe"}
+BUILD_PARSER_DIGESTS = {RELEASED: "664a51c06e0e4b7a", MAIN: "6a85a43cc52fd44f", RELEASED_0_24: "6a85a43cc52fd44f"}
+MAIN_DIGESTS = {RELEASED: "38cfe3fe3f1142f7", MAIN: "1f3058eda927d0fe", RELEASED_0_24: "1f3058eda927d0fe"}
 # ZImageCommand.load, which _core.run calls for the model. main a3b21fc: it binds the ZImage it builds, calls
 # VAEDecodeOptions.apply(args, model) and returns the model (the released load returns ZImage(...) directly).
-LOAD_DIGESTS = {RELEASED: "658f557e2fa63a64", MAIN: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {RELEASED: "658f557e2fa63a64", MAIN: "d91dfaa735845a7b", RELEASED_0_24: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-GENERATE_IMAGE_DIGESTS = {RELEASED: "a0e64be2aa3d8bc9", MAIN: "88204535dc85b78e"}
+GENERATE_IMAGE_DIGESTS = {RELEASED: "a0e64be2aa3d8bc9", MAIN: "88204535dc85b78e", RELEASED_0_24: "88204535dc85b78e"}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
@@ -72,13 +77,15 @@ RELEASED_DESTS = (
     "no_metadata", "output", "pid_decode", "pid_degrade_sigma", "prompt", "prompt_file", "quantize", "scheduler",
     "seed", "steps", "stepwise_image_output_dir", "vae_tile_size", "vae_tiling", "verbose", "width",
 )  # fmt: skip
+# main a3b21fc: add_vae_full_precision_arguments() adds one BooleanOptionalAction. 0.24.0 has the same options.
+VAE_FULL_PRECISION_OPTIONS = (
+    tuple(sorted((*RELEASED_OPTION_STRINGS, "--vae-full-precision", "--no-vae-full-precision"))),
+    tuple(sorted((*RELEASED_DESTS, "vae_full_precision"))),
+)
 OPTIONS = {
     RELEASED: (RELEASED_OPTION_STRINGS, RELEASED_DESTS),
-    # main a3b21fc: add_vae_full_precision_arguments() adds one BooleanOptionalAction.
-    MAIN: (
-        tuple(sorted((*RELEASED_OPTION_STRINGS, "--vae-full-precision", "--no-vae-full-precision"))),
-        tuple(sorted((*RELEASED_DESTS, "vae_full_precision"))),
-    ),
+    MAIN: VAE_FULL_PRECISION_OPTIONS,
+    RELEASED_0_24: VAE_FULL_PRECISION_OPTIONS,
 }
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
@@ -88,7 +95,7 @@ POST_LOAD = {
     "mflux-generate-z-image-teacache": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED: "812cb2e320c4eaee", MAIN: "812cb2e320c4eaee"},
+        {RELEASED: "812cb2e320c4eaee", MAIN: "812cb2e320c4eaee", RELEASED_0_24: "812cb2e320c4eaee"},
     ),
 }
 

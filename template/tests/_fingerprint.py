@@ -1,5 +1,5 @@
 """AST fingerprints of functions that ignore comments, docstrings, formatting and the CPython
-version (3.10 to 3.14). Copied from mlx-teacache's tests/_mflux_surface.py."""
+version (CI runs them on 3.11 and 3.13). Copied from mlx-teacache's tests/_mflux_surface.py."""
 
 import ast
 import hashlib
