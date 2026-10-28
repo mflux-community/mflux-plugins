@@ -2,11 +2,13 @@
 command relies on and FakeTeaCache cannot show."""
 
 import gc
+import importlib.metadata
 import json
 import weakref
 from pathlib import Path
 
 import mlx_teacache
+import pytest
 from _fakes import FakeZImage, LoopingFakeZImage
 from mflux.callbacks.instances.battery_saver import BatterySaver
 from mflux.callbacks.instances.memory_saver import MemorySaver
@@ -106,3 +108,24 @@ def test_the_real_lifecycle_callback_runs_before_mflux_memory_saver(run_command,
     assert len(teacache_positions) == 1, [type(cb) for cb in after_loop]
     assert len(saver_positions) == 1, [type(cb) for cb in after_loop]
     assert teacache_positions[0] < saver_positions[0]
+
+
+def test_the_real_library_warns_that_the_locked_mflux_is_newer_than_it_verified(
+    run_command, monkeypatch, tmp_path: Path
+) -> None:
+    """Bug: the command swallows or filters mlx-teacache's untested-mflux warning (or the library stops giving it),
+    so a user on mflux 0.24.0 never learns that mlx-teacache 0.14.0 was verified only up to mflux 0.23.0. The
+    pyproject filter that shows this warning instead of raising it was reviewed for this pair only, so any other
+    pair skips here (the mflux-main and mlx-teacache-main jobs run other pairs)."""
+    mflux_version = importlib.metadata.version("mflux")
+    teacache_version = importlib.metadata.version("mlx-teacache")
+    if (mflux_version, teacache_version) != ("0.24.0", "0.14.0"):
+        pytest.skip(
+            f"checks the reviewed pair mflux 0.24.0 with mlx-teacache 0.14.0; this run has mflux {mflux_version} "
+            f"with mlx-teacache {teacache_version}"
+        )
+    # The library warns once per process; an earlier real-library test has usually used that up.
+    monkeypatch.setattr(mlx_teacache._mflux_versions, "_warned", False)
+    with pytest.warns(mlx_teacache.errors.TeaCacheUntestedMfluxWarning, match=r"mflux 0\.24\.0 is newer"):
+        _run_with_the_real_library(run_command, monkeypatch, tmp_path)
+    assert (tmp_path / "out.png").is_file()

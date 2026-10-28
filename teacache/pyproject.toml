@@ -13,35 +13,30 @@ module-name = "mflux.extras.teacache"
 
 [project]
 name = "mflux-teacache"
-version = "0.1.2"
+version = "0.1.3"
 description = "TeaCache step skipping for mflux's command line, powered by mlx-teacache."
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
 maintainers = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["mflux", "mlx", "teacache", "apple-silicon", "diffusion", "z-image"]
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    # The supported mflux range comes from mlx-teacache's [mflux] extra, which lists the
-    # mflux versions mlx-teacache has checked. This package adds no mflux upper bound.
-    # 0.14.0 records mflux 0.22 and 0.23 as checked, so it warns on neither.
+    # The mflux upper bound comes from mlx-teacache's [mflux] extra (below 0.26 in 0.14.0). This package adds no
+    # mflux upper bound. 0.14.0 records mflux up to 0.23 as checked, so on mflux 0.24 it warns and still applies.
     "mlx-teacache[mflux]>=0.14.0",
-    # A floor only: 0.22 is the first mflux whose Z-Image parser sets the scheduler default.
-    "mflux>=0.22",
-    # Every mflux release up to 0.23.0 imports PIL._typing, which pillow 13 removed. mflux PR 890
-    # (https://github.com/mflux-community/mflux/pull/890) fixes it on main; drop this cap once a release carries it
-    # (tests/test_wheel.py fails when the lock moves past 0.23.0).
-    "pillow<13",
+    # A floor only: 0.24 is the first mflux that imports with pillow 13 (mflux PR 890); every earlier release
+    # imports PIL._typing, which pillow 13 removed.
+    "mflux>=0.24",
 ]
 
 [project.urls]
@@ -64,7 +59,7 @@ dev = [
 [tool.ruff]
 line-length = 120
 indent-width = 4
-target-version = "py310"
+target-version = "py311"
 respect-gitignore = true
 
 [tool.ruff.lint]
@@ -84,7 +79,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ty.environment]
-python-version = "3.10"
+python-version = "3.11"
 
 [tool.ty.analysis]
 # ty cannot model mflux core's pkgutil.extend_path merge: core is a regular package in
@@ -98,4 +93,8 @@ testpaths = ["tests"]
 addopts = "-ra --strict-markers"
 filterwarnings = [
     "error",
+    # A newer mflux than mlx-teacache has verified only warns for users, so it only warns here too. Reviewed for
+    # mflux 0.24.0 with mlx-teacache 0.14.0 (verified up to mflux 0.23.0); tests/test_real_teacache.py asserts this
+    # warning on that pair and skips on any other, so a new locked pair means reviewing this entry again.
+    "default::mlx_teacache.errors.TeaCacheUntestedMfluxWarning",
 ]

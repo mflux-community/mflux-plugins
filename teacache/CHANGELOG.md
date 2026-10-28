@@ -4,14 +4,28 @@ All notable changes to mflux-teacache are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.3]
 
 ### Added
 
-- On an mflux that has the new Z-Image decode options (mflux main after the 0.23.0 release), `--vae-tiling` and
-  `--vae-tile-size` no longer tile the decode, and the command prints mflux's own warning that they change only the
-  encode of an input image, as `mflux-generate-z-image` does. A run that TeaCache refuses prints only the refusal.
-  The mflux 0.22.0 and 0.23.0 releases still tile the decode, and there the command prints nothing new.
+- On mflux 0.24 and later, which has the new Z-Image decode options, `--vae-tiling` and `--vae-tile-size` no longer
+  tile the decode, and the command prints mflux's own warning that they change only the encode of an input image, as
+  `mflux-generate-z-image` does. A run that TeaCache refuses prints only the refusal.
+
+### Changed
+
+- Requires mflux 0.24 or newer (was 0.22) and Python 3.11 or newer (was 3.10). mflux 0.24 is the first release that
+  imports with Pillow 13, and it needs Python 3.11 itself. On Python 3.10 the installer keeps mflux-teacache 0.1.2,
+  because 0.1.3 requires Python 3.11 or newer. On mflux 0.23, installing or upgrading to this release also upgrades
+  mflux to 0.24. To stay on 0.1.2, pin `mflux-teacache==0.1.2`.
+- mlx-teacache has not been checked on mflux 0.24 yet. On it, the command prints a warning that the installed mflux is
+  newer than the ones mlx-teacache was checked on. The plugin's offline tests (fakes and a tiny random transformer)
+  show TeaCache still applying on mflux 0.24; no run with real model weights has confirmed it.
+
+### Removed
+
+- Python 3.10 is no longer supported. On Python 3.10 the installer keeps mflux-teacache 0.1.2.
+- The Pillow cap (`pillow<13`). mflux 0.24 needs Pillow 13, so the cap is no longer needed.
 
 ## [0.1.2]
 
