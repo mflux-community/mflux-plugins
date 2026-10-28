@@ -20,7 +20,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "the mflux-myplugin maintainers" }]
 maintainers = [{ name = "the mflux-myplugin maintainers" }]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 keywords = ["mflux", "mlx", "apple-silicon", "diffusion", "z-image"]
 classifiers = [
     # PyPI rejects any upload that carries this classifier. Delete it when you rename the template.
@@ -28,17 +28,14 @@ classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: MacOS",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    # A floor only: the first mflux whose command steps this plugin calls. Never an upper bound.
-    "mflux>=0.22",
-    # Every mflux release up to 0.23.0 imports PIL._typing, which pillow 13 removed. mflux PR 890
-    # (https://github.com/mflux-community/mflux/pull/890) fixes it on main; drop this cap once a release carries it.
-    "pillow<13",
+    # A floor only, never an upper bound: 0.24 is the first mflux that imports with pillow 13 (mflux PR 890) and has
+    # the command steps this plugin calls.
+    "mflux>=0.24",
     # Add the library your plugin wraps here, from PyPI, for example "<library>>=X.Y".
 ]
 
@@ -62,7 +59,7 @@ dev = [
 [tool.ruff]
 line-length = 120
 indent-width = 4
-target-version = "py310"
+target-version = "py311"
 respect-gitignore = true
 
 [tool.ruff.lint]
@@ -82,7 +79,7 @@ quote-style = "double"
 indent-style = "space"
 
 [tool.ty.environment]
-python-version = "3.10"
+python-version = "3.11"
 
 [tool.ty.analysis]
 # ty cannot model mflux core's pkgutil.extend_path merge: core is a regular package in

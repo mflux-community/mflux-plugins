@@ -35,7 +35,7 @@ from mlx_teacache import (
 from . import __version__ as plugin_version
 
 THRESHOLD_FLAG = "--teacache-threshold"
-# mflux 0.22's --compute-precision (float16 today): any non-default value is allowed for now, with this one
+# mflux's --compute-precision (float16 only, as of mflux 0.24): any non-default value is allowed for now, with this one
 # warning. Kept in one place so a later switch to a refusal is a small change.
 COMPUTE_PRECISION_WARNING = (
     "TeaCache's skip decisions and image quality have not been measured with --compute-precision {value}; "

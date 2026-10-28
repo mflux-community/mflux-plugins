@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
+from packaging.version import Version
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -62,20 +63,18 @@ def test_wheel_declares_the_command_and_an_mflux_floor_without_a_cap(wheel: zipf
     assert not operators & {"<", "<=", "==", "===", "~="}, f"{mflux} has an upper bound or a pin"
 
 
-def test_wheel_keeps_pillow_below_13(wheel: zipfile.ZipFile) -> None:
-    """Bug: the pillow<13 cap is dropped or narrowed by a marker, so a plugin made from this template installs pillow
-    13 on Python 3.11 or newer, where every mflux release up to 0.23.0 fails at import. Delete this test together with
-    the cap once an mflux release carries mflux PR 890."""
+def test_wheel_floors_mflux_at_0_24(wheel: zipfile.ZipFile) -> None:
+    """Bug: the mflux floor drops below 0.24 (back to "mflux>=0.22", say), so a plugin scaffolded from the template
+    installs next to Pillow 13 with an mflux release that fails at import. The floor replaces the old pillow cap:
+    every mflux release before 0.24 imports PIL._typing, which Pillow 13 removed."""
     requires = [
         Requirement(line.split(":", 1)[1].strip())
         for line in wheel.read(f"{dist_info(wheel)}/METADATA").decode().splitlines()
         if line.startswith("Requires-Dist:")
     ]
-    pillows = [r for r in requires if r.name == "pillow"]
-    assert len(pillows) == 1, f"expected one pillow requirement, got {[str(r) for r in pillows]}"
-    (pillow,) = pillows
-    assert str(pillow.specifier) == "<13"
-    assert pillow.marker is None, f"{pillow} applies to some Pythons only"
+    (mflux,) = [r for r in requires if r.name == "mflux"]
+    assert Version("0.23.99") not in mflux.specifier, f"{mflux} admits an mflux that fails to import with Pillow 13"
+    assert Version("0.24.0") in mflux.specifier, f"{mflux} refuses mflux 0.24.0"
 
 
 def test_wheel_carries_the_license_and_the_mflux_notice(wheel: zipfile.ZipFile) -> None:
@@ -91,12 +90,14 @@ def test_wheel_carries_the_license_and_the_mflux_notice(wheel: zipfile.ZipFile) 
 
 
 def test_wheel_claims_only_the_python_versions_it_is_tested_on(wheel: zipfile.ZipFile) -> None:
-    """Bug: a "Programming Language :: Python :: 3.X" classifier names a version outside 3.10 to 3.13 (the range CI
-    tests, at both ends), so PyPI advertises support nobody checked."""
+    """Bug: a "Programming Language :: Python :: 3.X" classifier names a version outside 3.11 to 3.13 (the range CI
+    tests, at both ends), or Requires-Python still admits 3.10, which mflux 0.24 and pillow 13 do not support, so PyPI
+    advertises support nobody checked."""
     metadata = wheel.read(f"{dist_info(wheel)}/METADATA").decode().splitlines()
     prefix = "Classifier: Programming Language :: Python :: 3."
     minors = sorted(int(line.removeprefix(prefix)) for line in metadata if line.startswith(prefix))
-    assert minors == [10, 11, 12, 13]
+    assert minors == [11, 12, 13]
+    assert "Requires-Python: >=3.11" in metadata
 
 
 def test_the_template_wheel_can_never_be_uploaded(wheel: zipfile.ZipFile) -> None:

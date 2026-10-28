@@ -128,7 +128,7 @@ def refers_to_folder(text: str, folder: str) -> bool:
 
 
 def files_mentioning(folder: Path, token: str) -> list[str]:
-    """Files under folder whose path or text contains token. Hidden folders (.venv, .venv-py310, caches),
+    """Files under folder whose path or text contains token. Hidden folders (.venv, .venv-py311, caches),
     __pycache__, dist and build are skipped, and so are symlinks and the text of a binary file (a NUL byte in its
     first 8 KB)."""
     found = []

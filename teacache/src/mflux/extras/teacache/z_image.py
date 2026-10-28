@@ -11,8 +11,8 @@ from mflux.models.z_image.variants.z_image import ZImage
 
 from ._core import Adapter, add_teacache_arguments, run
 
-try:  # Not in the mflux 0.22.0 / 0.23.0 releases, which the locked environment type-checks against.
-    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions  # ty: ignore[unresolved-import]
+try:  # Not in the mflux 0.22.0 / 0.23.0 releases.
+    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
 except ModuleNotFoundError as exc:
     if exc.name != "mflux.models.common.vae.vae_decode_options":
         raise  # the module is there and broken: fail loudly, never run without its warning

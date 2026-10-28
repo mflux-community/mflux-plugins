@@ -14,9 +14,9 @@ from mflux.models.z_image.variants.z_image import ZImage
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.image_util import ImageUtil
 
-try:  # Not in the mflux 0.22.0 / 0.23.0 releases, which the locked environment type-checks against.
-    from mflux.models.common.vae.block_decoder import VAEBlockDecoder  # ty: ignore[unresolved-import]
-    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions  # ty: ignore[unresolved-import]
+try:  # Not in the mflux 0.22.0 / 0.23.0 releases.
+    from mflux.models.common.vae.block_decoder import VAEBlockDecoder
+    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
 except ModuleNotFoundError as exc:
     if exc.name not in ("mflux.models.common.vae.block_decoder", "mflux.models.common.vae.vae_decode_options"):
         raise
