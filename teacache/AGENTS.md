@@ -29,12 +29,12 @@ This package follows the namespace model of [mflux PR #776](https://github.com/m
 |---|---|
 | Install the dev environment | `uv sync --locked` |
 | Tests | `uv run pytest` |
-| Tests on Python 3.10 | `UV_PROJECT_ENVIRONMENT=.venv-py310 uv run --python 3.10 pytest` |
+| Tests on Python 3.11 | `UV_PROJECT_ENVIRONMENT=.venv-py311 uv run --python 3.11 pytest` |
 | Lint and format check | `uv run ruff check . && uv run ruff format --check .` |
 | Type check | `uv run ty check src` |
 | Build | `uv build` |
 
-Every uv command against `.venv-py310` needs `--python 3.10`, `uv sync` and `uv run` alike; without it uv rebuilds that
+Every uv command against `.venv-py311` needs `--python 3.11`, `uv sync` and `uv run` alike; without it uv rebuilds that
 environment on 3.13 from `.python-version`. CI sets `UV_PYTHON` instead.
 
 Run the tests, ruff and ty before you call a change done.
@@ -122,25 +122,22 @@ code, for example). When an mflux update turns it red:
   the `TeaCacheHandle` constructor, `TeaCacheStats.record` and `finalize_last_generation`). If an mlx-teacache
   release changes them, fix the fake, not the plugin.
 - Each test's docstring starts with `Bug:` and names the one-line bug that turns it red.
-- Warnings are errors in the test run. Expect a warning with `pytest.warns`, or assert there is none with
+- Warnings are errors in the test run, with one exception: mlx-teacache's `TeaCacheUntestedMfluxWarning` is shown, not
+  raised (`filterwarnings` in `pyproject.toml`), so a run on an mflux newer than mlx-teacache has checked still
+  passes. Expect a warning with `pytest.warns`, or assert there is none with
   `warnings.catch_warnings()` plus `warnings.simplefilter("error")`. Never add a blanket ignore.
 
 ## Dependencies and version pins
 
-- Runtime dependencies: `mlx-teacache[mflux]>=0.14.0`, `mflux>=0.22` and `pillow<13`.
+- Runtime dependencies: `mlx-teacache[mflux]>=0.14.0` and `mflux>=0.24`.
 - The mflux upper bound comes from mlx-teacache's extra: below 0.26 with mlx-teacache 0.14.0. The direct `mflux`
-  requirement is a lower bound only: 0.22 is the first mflux whose Z-Image parser sets the scheduler default itself.
+  requirement is a lower bound only: 0.24 is the first mflux that imports with pillow 13 ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)).
   Never give an mflux requirement an upper bound here, because a newer mflux runs and warns. `tests/test_wheel.py`
   checks this.
 - mlx-teacache 0.14.0 records mflux 0.22 and 0.23 as checked, and it follows mflux 0.22's bfloat16 Z-Image
-  stream. It prints no warning on either. The weight-free test in `tests/test_real_teacache.py` runs with warnings as
-  errors to show that for the locked mflux (0.22.0); the release job's wheel test installs the newest mflux.
-- `pillow<13` is temporary: every mflux release up to 0.23.0 imports `PIL._typing`, which pillow 13 removed, so a
-  fresh install on Python 3.11 or newer would fail at `import mflux`. mflux PR 890
-  (https://github.com/mflux-community/mflux/pull/890) fixes it on main. Nothing moves the lock by itself: when you
-  upgrade it past mflux 0.23.0, a test in `tests/test_wheel.py` fails. If that release carries the fix, drop the cap
-  here and in `template/pyproject.toml`, delete the pillow tests in both folders, and release, because every
-  published version keeps its cap.
+  stream. It prints no warning on either. It has not been checked on mflux 0.24: there it issues
+  `TeaCacheUntestedMfluxWarning` and TeaCache still applies. The test run shows that warning instead of failing on it
+  (`filterwarnings` in `pyproject.toml`); the release job's wheel test installs the newest mflux.
 - All of them come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed
   file.
 - `ruff` and `ty` are pinned exactly. After you change `pyproject.toml`, run `uv lock` and
@@ -154,7 +151,7 @@ request.
 
 - The `test` job is blocking in this workflow; branch protection requires only the unfiltered `lint / repo` check,
   because a path-filtered check never reports on pull requests that don't touch `teacache/`. It runs ruff, ty and
-  pytest, including the built-wheel test, in the locked environment (the mflux release on PyPI) on Python 3.10 and
+  pytest, including the built-wheel test, in the locked environment (the mflux release on PyPI) on Python 3.11 and
   3.13.
 - The `mflux-main` and `mlx-teacache-main` jobs may fail on pull requests and pushes without blocking them. On the
   daily scheduled run they fail for real, so GitHub sends its failure notice. Each runs the drift test
@@ -163,10 +160,11 @@ request.
   save over the locked cache that the `test` job restores.
 - `mflux-main` installs mflux from its `main` branch into the locked environment (mflux's own dependencies can move
   too). A red drift step means mflux changed something this package copies or pins: follow "When the drift test
-  fails". The second step also goes red when mflux main reports a version newer than the newest one mlx-teacache has
-  verified: mlx-teacache then issues `TeaCacheUntestedMfluxWarning`, and the warnings-as-errors setting turns it
-  into a failure of the real-library test in `tests/test_real_teacache.py`. The fix for that is an mlx-teacache
-  release that records the new mflux, not a change here.
+  fails". When mflux main reports a version newer than the newest one mlx-teacache has verified, mlx-teacache issues
+  `TeaCacheUntestedMfluxWarning`. The test run shows it as a warning and does not fail on it (`filterwarnings` in
+  `pyproject.toml` lets that one warning through and turns every other into an error), so it fails neither this job
+  nor the locked `test` job. An mlx-teacache release that records the new mflux ends the warning; it is not a change
+  here.
 - `mlx-teacache-main` reinstalls only mlx-teacache, from its `main` branch; mflux and every other package stay at
   the locked versions unless mlx-teacache main needs others. Red here means an mlx-teacache change would break this
   package once released.

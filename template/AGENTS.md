@@ -143,11 +143,8 @@ new release that ships the reviewed `main` code, for example). When an mflux upd
 
 ## Dependencies and version pins
 
-- The runtime dependencies are `mflux>=0.22` and `pillow<13`. Add your library next to them with its own lower bound.
-- `pillow<13` is temporary: every mflux release up to 0.23.0 imports `PIL._typing`, which pillow 13 removed, so a
-  fresh install on Python 3.11 or newer would fail at `import mflux`. mflux PR 890
-  (https://github.com/mflux-community/mflux/pull/890) fixes it on main. Once an mflux release carries the fix, drop
-  the cap and its test in `tests/test_wheel.py`.
+- The runtime dependency is `mflux>=0.24`, the first mflux that imports with pillow 13 ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)). Add your
+  library next to it with its own lower bound.
 - A requirement on `mflux` is a lower bound only. Never give it an upper bound here, because a newer mflux runs and
   warns. `tests/test_wheel.py` checks this.
 - Dependencies come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed
@@ -161,7 +158,7 @@ new release that ships the reviewed `main` code, for example). When an mflux upd
 template is never published. A plugin's release workflow calls its copy of this workflow (`workflow_call`, with
 `blocking-only: true`) to run only the `test` job before it publishes. The root `lint.yml` runs on every pull request.
 
-- The `test` job runs ruff, ty and pytest, including the built-wheel test, in the locked environment on Python 3.10
+- The `test` job runs ruff, ty and pytest, including the built-wheel test, in the locked environment on Python 3.11
   and 3.13.
 - The `mflux-main` job installs mflux from its `main` branch and may fail on pull requests and pushes without
   blocking them. A red drift step means mflux changed something this package copies or pins: follow "When the drift

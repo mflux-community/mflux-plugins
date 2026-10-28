@@ -50,7 +50,7 @@ mflux also has a `--step-cache-ratio` flag (alias `--teacache-ratio`), on the Qw
 different feature: a fixed share of steps reused by mflux's own step cache. That step cache is not an option on the
 Z-Image command.
 
-`--compute-precision` is accepted with a warning: in mflux 0.22 the only value is `float16`, and TeaCache's skip
+`--compute-precision` is accepted with a warning: in mflux 0.24 the only value is `float16`, and TeaCache's skip
 decisions and image quality have not been measured with it. It changes only mflux's attention and feed-forward math;
 TeaCache's cached results keep the model's own precision.
 
@@ -88,14 +88,14 @@ command once their mflux command has the same load-and-generate steps.
 
 TeaCache's settings for Z-Image, the 0.12 default threshold included, come from runs of one recipe: the
 `Tongyi-MAI/Z-Image` checkpoint at 8-bit, 512×512, 50 steps and guidance 4.0. The example under Usage uses the same
-steps and guidance, but mflux's default size of 1024×1024. Leave out `--guidance` and mflux 0.22 runs Z-Image at
+steps and guidance, but mflux's default size of 1024×1024. Leave out `--guidance` and mflux 0.24 runs Z-Image at
 guidance 0, with classifier-free guidance off.
 
-The settings were fitted on mflux's float32 hidden stream. mflux 0.22 runs Z-Image in bfloat16 by default. There, the
-same recipe skipped 12 of 48 active steps instead of 15, at an SSIM of 0.990 against plain mflux (SSIM scores image
-similarity; 1.0 means identical), according to the
-[Z-Image page](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/z-image-base.md) in the mlx-teacache
-repository. Add `--float32` to run on the stream the settings were fitted on.
+The settings were fitted on mflux's float32 hidden stream. mflux 0.24 runs Z-Image in bfloat16 by default. On the
+bfloat16 stream, a run of the same recipe on mflux's main branch after the 0.21.0 release skipped 12 of 48 active steps
+instead of 15, at an SSIM of 0.990 against plain mflux (SSIM scores image similarity; 1.0 means identical), according
+to the [Z-Image page](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/z-image-base.md) in the
+mlx-teacache repository. That run was not repeated on mflux 0.24. Add `--float32` to run on the stream the settings were fitted on.
 
 Other guidance values, step counts, sizes, LoRAs and precisions all run. How many steps TeaCache skips there, and
 how close the image stays to a plain mflux run, has not been measured. The command doesn't warn about these, apart
@@ -119,14 +119,16 @@ For measured speedups and image comparisons, see the
 
 ## Versions
 
-- Python 3.10 or newer, on Apple Silicon.
-- mflux 0.22 or newer. The upper limit comes from mlx-teacache: its `[mflux]` extra allows mflux below 0.26. A newer
-  mflux needs a newer mlx-teacache first; until then the installer keeps or picks an older mflux. mflux 0.21 and
-  earlier set the Z-Image scheduler default outside the parser this command reuses, so the command would not get it.
-- mlx-teacache 0.14.0 or newer, which lists mflux 0.22 and 0.23 as checked. This package adds no upper limit of its
-  own. On an mflux newer than the newest one mlx-teacache was checked against, the command runs and prints a warning.
-- Pillow below 13. Every mflux release up to 0.23.0 fails to import with Pillow 13, and this cap keeps a fresh install
-  working on Python 3.11 and newer. It goes once an mflux release ships the fix.
+- Python 3.11 or newer, on Apple Silicon.
+- mflux 0.24 or newer. It is the first mflux that imports with Pillow 13, which a fresh install picks. The upper limit
+  comes from mlx-teacache: its `[mflux]` extra allows mflux below 0.26. A newer mflux needs a newer mlx-teacache
+  first; until then the installer keeps or picks an older mflux. On Python 3.10 the installer keeps version 0.1.2 of
+  this package. On mflux 0.23, installing or upgrading to this release also upgrades mflux to 0.24; to stay on 0.1.2,
+  pin `mflux-teacache==0.1.2`.
+- mlx-teacache 0.14.0 or newer, which lists mflux 0.22 and 0.23 as checked. It has not been checked on mflux 0.24: there
+  the command runs and prints a warning that the installed mflux is newer than the checked ones. The plugin's offline
+  tests (fakes and a tiny random transformer) show TeaCache still applying there; no run with real weights has
+  confirmed it. This package adds no upper limit of its own.
 
 mflux's other options, `--float32` included, pass through unchanged.
 

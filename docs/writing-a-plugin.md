@@ -167,7 +167,7 @@ the drift test fails".
 
 ## Which mflux commands can host a plugin
 
-A plugin can extend only an mflux command that has command steps. In mflux 0.22, these commands have them:
+A plugin can extend only an mflux command that has command steps. In mflux 0.24, these commands have them:
 
 | mflux command | Steps class |
 |---|---|
@@ -177,15 +177,20 @@ A plugin can extend only an mflux command that has command steps. In mflux 0.22,
 | `mflux-generate-ernie-image` | `ErnieImageCommand` |
 | `mflux-generate-ernie-image-turbo` | `ErnieImageTurboCommand` |
 | `mflux-generate-krea2` | `Krea2Command` |
+| `mflux-generate-krea2-controlnet` | `Krea2ControlnetCommand` |
 | `mflux-generate-lens` | `LensCommand` |
 | `mflux-generate-boogu` | `BooguImageCommand` |
 | `mflux-generate-ideogram4` | `Ideogram4Command` |
 | `mflux-generate-qwen` | `QwenImageCommand` |
 | `mflux-generate-qwen-edit` | `QwenImageEditCommand` |
 | `mflux-generate-qwen-2.1-controlnet` | `Qwen21ControlnetCommand` |
+| `mflux-generate-anima` | `AnimaCommand` |
+| `mflux-generate-fibo2` | `Fibo2Command` |
+| `mflux-generate-fibo2-edit` | `Fibo2EditCommand` |
+| `mflux-generate-moss-image` | `MOSSImageCommand` |
 
-The other commands have no steps yet. Among them are the FLUX.1 and FLUX.2 commands, FIBO, Ming, Qwen 2.1 generate
-and edit, and the upscalers. A model family gets a plugin command only once its mflux command has steps.
+The other commands have no steps yet. Among them are the FLUX.1 and FLUX.2 commands, FIBO (`mflux-generate-fibo`), Iris, Ming,
+Qwen 2.1 generate and edit, and the upscalers. A model family gets a plugin command only once its mflux command has steps.
 
 This list is a snapshot and goes out of date. To refresh it, run this in an mflux checkout:
 
@@ -198,8 +203,8 @@ Each model's README in mflux shows how to call its steps from Python. The fulles
 
 ## Versions and dependencies
 
-- Require mflux with a lower bound only, for example `mflux>=0.22`. The floor is the first mflux release that has
-  every step, parser default and option your command uses.[^floor]
+- Require mflux with a lower bound only, for example `mflux>=0.24`. The floor is the first mflux release that has
+  every step, parser default and option your command uses, and that imports with Pillow 13.[^floor]
 - Never give mflux an upper bound. Users install with `uv tool install mflux --with-executables-from mflux-<name>`,
   and a cap would make the installer pick an older mflux without telling them. The cost: a new mflux release can
   break the plugin. The scheduled `mflux-main` CI job warns you early, and the fix is a plugin release.
@@ -263,7 +268,7 @@ Three workflows test a published plugin: the shared `lint.yml` and two of the pl
   license comparison, the checker and the checker's tests. Its `repo` job is the required check.
 - `<name>.yml` runs on pull requests, and on pushes to `main`, that touch the folder or the workflow. It also runs
   once a day on a schedule (the template: once a week) and when the release workflow calls it. Its `test` job runs
-  ruff, ty and pytest in the locked environment on macOS, with Python 3.10 and 3.13. Its `mflux-main` job runs the
+  ruff, ty and pytest in the locked environment on macOS, with Python 3.11 and 3.13. Its `mflux-main` job runs the
   tests against mflux's `main`.
 - `<name>-release.yml` runs on a `<name>-v*` tag. It checks the tag, runs the `test` job, builds, tests the wheel and
   publishes. See [Releases](#releases).
@@ -374,8 +379,10 @@ A package outside this repository can follow the same contract:
 [^drift]: The digests are of the functions' syntax trees, so changes to formatting, comments or docstrings in mflux
     don't trip them. The test also pins the parser's option names and the signatures of the steps.
 
-[^floor]: The template starts at `mflux>=0.22`. teacache uses the same floor, because 0.22 is the first mflux whose
-    Z-Image parser sets the scheduler default itself.
+[^floor]: The template starts at `mflux>=0.24`. teacache uses the same floor, because 0.24 is the first mflux that
+    imports with Pillow 13 ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)). It also needs Python
+    3.11. Releases before it fail at `import mflux` on a fresh install. The first mflux whose Z-Image parser sets the
+    scheduler default itself is 0.22, so that need is met too.
 
 [^required]: The `test` job is not a required check in the branch rules. A workflow that runs only when its folder
     changes never reports on other pull requests, so only the unfiltered `lint / repo` check can be required.
