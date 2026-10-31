@@ -4,6 +4,28 @@ All notable changes to mflux-teacache are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-31
+
+### Added
+
+- The command `mflux-generate-qwen-teacache`. It takes every option of `mflux-generate-qwen`, runs mflux's own load
+  and generate steps, and turns on TeaCache step skipping for Qwen-Image-2512, with a default threshold of 0.25.
+  Both classifier-free guidance runs of a step follow one skip decision.
+- The command refuses `--model Qwen/Qwen-Image` (any letter case) and the mflux-community copies of the original
+  Qwen-Image before any weights load, with exit code 2 and a pointer to running the original checkpoint with
+  mlx-teacache from Python.
+- A `--model` path or repo other than `Qwen/Qwen-Image-2512` and its mflux-community copies runs with one warning that
+  names `Qwen/Qwen-Image-2512`.
+- The README reports what the Qwen-Image command did on real weights (mflux 0.24.0, 512×512, `-q 4`, 32 GB M1 Max):
+  skip counts, SSIM against plain mflux, and a peak of about 26 GiB at load. Several seeds in one command do not fit
+  in 32 GB at that size; run one seed per command.
+
+### Changed
+
+- The checkpoint warning compares repo ids without regard to case, as the Hub does. This also affects the Z-Image
+  command: `--model tongyi-mai/z-image` and other letter-case variants of the calibrated checkpoint and its
+  mflux-community copies no longer get the warning.
+
 ## [0.1.3]
 
 ### Added
