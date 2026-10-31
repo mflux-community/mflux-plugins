@@ -53,12 +53,13 @@ def requirements(wheel: zipfile.ZipFile) -> list[Requirement]:
 
 
 def test_wheel_declares_the_command_and_no_mflux_upper_bound(wheel: zipfile.ZipFile) -> None:
-    """Bug: the console script points at another module or loses the mflux-generate prefix; the mlx-teacache
+    """Bug: a console script is missing, points at another module or loses the mflux-generate prefix; the mlx-teacache
     requirement loses its [mflux] extra or its 0.14.0 floor; the mflux floor drops below 0.24, so a fresh install can
     pair an mflux that fails at import with pillow 13; or an mflux requirement gains an upper bound, so a newer mflux
     is refused at install instead of running with a warning."""
     entry_points = wheel.read(f"{dist_info(wheel)}/entry_points.txt").decode()
     assert "mflux-generate-z-image-teacache = mflux.extras.teacache.z_image:main" in entry_points
+    assert "mflux-generate-qwen-teacache = mflux.extras.teacache.qwen_image:main" in entry_points
     requires = requirements(wheel)
     (teacache,) = [r for r in requires if r.name == "mlx-teacache"]
     assert "mflux" in teacache.extras and str(teacache.specifier) == ">=0.14.0"
