@@ -118,6 +118,13 @@ def reviewed_sources(accepted: Mapping[str, object], actual: object) -> set[str]
     return {source for source, value in accepted.items() if value == actual}
 
 
+def sources_not_ruled_out(accepted: Mapping[str, object], actual: object, labels: tuple[str, ...]) -> set[str]:
+    """The labels `actual` leaves possible for the whole set: those under which it is the recorded value, plus those
+    under which this part has no value yet (a command added since that source was last reviewed). A part's own test
+    still requires a recorded value."""
+    return reviewed_sources(accepted, actual) | {label for label in labels if label not in accepted}
+
+
 def parser_options() -> tuple[tuple[str, ...], tuple[str, ...]]:
     parser = z_image_generate.build_parser()
     strings = tuple(sorted(option for action in parser._actions for option in action.option_strings))
@@ -184,17 +191,36 @@ def test_mflux_load_is_a_reviewed_one() -> None:
     assert reviewed_sources(LOAD_DIGESTS, actual), f"ZImageCommand.load changed: {REVIEW_FIRST} {actual}"
 
 
-def pinned_sources() -> dict[str, set[str]]:
-    """Per pinned part, the labels of the reviewed mflux sources that hold its current value."""
+def test_a_part_with_no_value_under_a_label_leaves_that_label_open() -> None:
+    """Bug: the whole-set check reads a part recorded under the release only (a command added since mflux main was
+    last reviewed) as ruling main out, so on mflux main it fails although every part's own pin passes; or it leaves a
+    label open where the part has a different value there, so a mix of two sources passes."""
+    labels = ("release", "main")
+    assert sources_not_ruled_out({"release": "a"}, "a", labels) == {"release", "main"}
+    assert sources_not_ruled_out({"release": "a"}, "b", labels) == {"main"}
+    assert sources_not_ruled_out({"release": "a", "main": "b"}, "a", labels) == {"release"}
+    assert sources_not_ruled_out({"release": "a", "main": "b"}, "c", labels) == set()
+
+
+def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
+    """Per pinned part, the labels of the reviewed mflux sources it leaves possible (sources_not_ruled_out), or with
+    recorded_only those under which its value is recorded (reviewed_sources)."""
+    labels = tuple(REPORTED_VERSIONS)
+
+    def possible(accepted: Mapping[str, object], actual: object) -> set[str]:
+        if recorded_only:
+            return reviewed_sources(accepted, actual)
+        return sources_not_ruled_out(accepted, actual, labels)
+
     return {
-        "build_parser": reviewed_sources(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
-        "options": reviewed_sources(OPTIONS, parser_options()),
-        "main": reviewed_sources(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
-        "load": reviewed_sources(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
-        "generate_image": reviewed_sources(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
-        "prediction step": reviewed_sources(PREDICT_DIGESTS, prediction_step_digests()),
+        "build_parser": possible(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
+        "options": possible(OPTIONS, parser_options()),
+        "main": possible(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
+        "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
+        "generate_image": possible(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
+        "prediction step": possible(PREDICT_DIGESTS, prediction_step_digests()),
         **{
-            f"post-load {command}": reviewed_sources(digests, statements_fingerprint_from(main, first_statement))
+            f"post-load {command}": possible(digests, statements_fingerprint_from(main, first_statement))
             for command, (main, first_statement, digests) in POST_LOAD.items()
         },
     }
@@ -217,13 +243,14 @@ def _imported_mflux_is_the_installed_one() -> bool:
 @pytest.mark.skipif(not _imported_mflux_is_the_installed_one(), reason="the imported mflux is not the installed one")
 def test_the_mflux_version_is_one_the_matched_source_reports() -> None:
     """Bug: an mflux release ships the code last reviewed on main, every pin matches the main label, and nothing asks
-    for a label naming that release."""
+    for a label naming that release; or a part has no value under that release's label (a command left out of its
+    review), and the release passes for that command unreviewed."""
     version = importlib.metadata.version("mflux")
-    matched = sorted(set.intersection(*pinned_sources().values()))
+    matched = sorted(set.intersection(*pinned_sources(recorded_only=True).values()))
     assert any(version in REPORTED_VERSIONS[source] for source in matched), (
         f"mflux {version} holds the values recorded under {matched}, a source that reports "
-        f"{[REPORTED_VERSIONS[source] for source in matched]}: review mflux {version} and record these values under "
-        f"a label for that release, with its version"
+        f"{[REPORTED_VERSIONS[source] for source in matched]}: review mflux {version} and record every part's value "
+        f"under a label for that release, with its version"
     )
 
 

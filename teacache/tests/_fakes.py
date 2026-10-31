@@ -10,6 +10,8 @@ this fake, not the plugin (AGENTS.md says the same)."""
 
 import inspect
 import warnings
+import weakref
+from collections.abc import Callable
 from typing import Any, ClassVar
 
 import mlx.core as mx
@@ -17,9 +19,13 @@ import mlx_teacache
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.models.common.compute_precision.compute_precision import ComputePrecision
 from mflux.models.common.config.config import Config
+from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
+from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransformer
+from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 from mflux.models.z_image.latent_creator import ZImageLatentCreator
 from mflux.models.z_image.model.z_image_transformer.transformer import ZImageTransformer
 from mflux.models.z_image.variants.z_image import ZImage
+from mflux.utils.exceptions import StopImageGenerationException
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.image_util import ImageUtil
 from mlx_teacache import Provenance, StepDecision, TeaCacheHandle, TeaCacheStats
@@ -59,6 +65,7 @@ class FakeZImage:
     names to local files), and quantize is the requested bit width (the real WeightApplier can
     resolve it from the checkpoint's stored quantization)."""
 
+    PIPELINE: ClassVar[type] = ZImage
     init_signature = inspect.signature(ZImage.__init__)  # read at import, before conftest blocks the real __init__
     generate_signature = inspect.signature(ZImage.generate_image)
     instances: ClassVar[list["FakeZImage"]] = []
@@ -184,6 +191,140 @@ class LoopingFakeZImage(FakeZImage):
         ctx.after_loop(latents)
 
 
+class FakeQwenImage:
+    """Stands in for QwenImage. Construction is what QwenImageCommand.load() does, so an empty `instances` means no
+    weights were loaded. generate_image builds its GeneratedImage the way mflux 0.22's QwenImage.generate_image does
+    (a real Config with the passed scheduler, the real ImageUtil.to_image with the same keywords, negative_prompt
+    included and no generation_parameters), so a save writes the PNG and JSON sidecar the real command writes.
+    lora_paths / lora_scales and quantize are the values passed to __init__, as in FakeZImage."""
+
+    PIPELINE: ClassVar[type] = QwenImage
+    init_signature = inspect.signature(QwenImage.__init__)  # read at import, before conftest blocks the real __init__
+    generate_signature = inspect.signature(QwenImage.generate_image)
+    instances: ClassVar[list["FakeQwenImage"]] = []
+    fail_on_seed: ClassVar[dict[int, BaseException]] = {}
+
+    def __init__(self, **kwargs: Any) -> None:
+        bound = self.init_signature.bind(self, **kwargs)
+        bound.apply_defaults()
+        self.init_kwargs = kwargs
+        self.model_config = bound.arguments["model_config"]
+        self.bits = bound.arguments["quantize"]
+        self.lora_paths = bound.arguments["lora_paths"]
+        self.lora_scales = bound.arguments["lora_scales"]
+        self.prompt_cache: dict[str, Any] = {}
+        self.callbacks = CallbackRegistry()
+        self.tiling_config = None
+        self.generate_calls: list[dict[str, Any]] = []
+        type(self).instances.append(self)
+
+    def generate_image(self, **kwargs: Any) -> GeneratedImage:
+        bound = self.generate_signature.bind(self, **kwargs)
+        bound.apply_defaults()
+        self.generate_calls.append(kwargs)
+        failure = type(self).fail_on_seed.get(kwargs["seed"])
+        if failure is not None:
+            raise failure
+        call = bound.arguments
+        # The steps of mflux 0.22's QwenImage.generate_image that decide what the image records. Only the pixels (a
+        # blank decode) and generation_time (no tqdm timing) are made up.
+        config = Config(
+            width=call["width"],
+            height=call["height"],
+            guidance=call["guidance"],
+            scheduler=call["scheduler"],
+            image_path=call["image_path"],
+            image_strength=call["image_strength"],
+            model_config=self.model_config,
+            num_inference_steps=call["num_inference_steps"],
+        )
+        self.denoise(config=config, seed=call["seed"], prompt=call["prompt"], negative_prompt=call["negative_prompt"])
+        return ImageUtil.to_image(
+            decoded_latents=mx.zeros((1, 3, 16, 16)),
+            config=config,
+            seed=call["seed"],
+            prompt=call["prompt"],
+            quantization=self.bits,
+            lora_paths=self.lora_paths,
+            lora_scales=self.lora_scales,
+            image_path=config.image_path,
+            image_strength=config.image_strength,
+            generation_time=0.01,
+            negative_prompt=call["negative_prompt"],
+            pid_decode=call["pid_decode"],
+            pid_degrade_sigma=call["pid_degrade_sigma"],
+        )
+
+    def denoise(self, *, config: Config, seed: int, prompt: str, negative_prompt: str | None) -> None:
+        """No denoising loop and no callbacks: the image is made up, and FakeTeaCache commits its own record."""
+
+
+class LoopingFakeQwenImage(FakeQwenImage):
+    """A FakeQwenImage that runs mflux 0.22's Qwen denoising loop body verbatim (tests/test_fakes.py compares it with
+    QwenImage.generate_image's): both CFG branches through self.transformer, the guided noise, the scheduler step, the
+    callback context and the interruption path. The transformer is a tiny real QwenTransformer with random,
+    never-loaded weights. The prompt encodings are fixed random arrays shaped as mflux's encoder returns them (no text
+    encoder), the negative one different from the prompt.
+
+    transformer_ref is a weak reference to the last instance's transformer; decode_hook, when set, is called with the
+    model after the after-loop callbacks, where mflux decodes, so a test can check what is still alive there."""
+
+    JOINT_ATTENTION_DIM = 32
+    transformer_ref: ClassVar["weakref.ref[QwenTransformer] | None"] = None
+    decode_hook: ClassVar[Callable[[FakeQwenImage], None] | None] = None
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        mx.random.seed(0)
+        # head dim 128 is what the rotary embedding's axes (16 + 56 + 56) require.
+        self.transformer: QwenTransformer | None = QwenTransformer(
+            num_layers=2, attention_head_dim=128, num_attention_heads=1, joint_attention_dim=self.JOINT_ATTENTION_DIM
+        )
+        self.transformer.set_dtype(mx.bfloat16)  # loaded weights are bfloat16
+        type(self).transformer_ref = weakref.ref(self.transformer)
+
+    def denoise(self, *, config: Config, seed: int, prompt: str, negative_prompt: str | None) -> None:
+        latents = QwenLatentCreator.create_noise(seed, config.height, config.width)
+        prompt_embeds = mx.random.normal((1, 7, self.JOINT_ATTENTION_DIM), key=mx.random.key(1))
+        prompt_mask = mx.ones((1, 7), dtype=mx.int32)
+        negative_prompt_embeds = mx.random.normal((1, 3, self.JOINT_ATTENTION_DIM), key=mx.random.key(2))
+        negative_prompt_mask = mx.ones((1, 3), dtype=mx.int32)
+        ctx = self.callbacks.start(seed=seed, prompt=prompt, config=config)
+        ctx.before_loop(latents)
+
+        for t in config.time_steps:
+            try:
+                latents = config.scheduler.scale_model_input(latents, t)
+                noise = self.transformer(
+                    t=t,
+                    config=config,
+                    hidden_states=latents,
+                    encoder_hidden_states=prompt_embeds,
+                    encoder_hidden_states_mask=prompt_mask,
+                )
+                noise_negative = self.transformer(
+                    t=t,
+                    config=config,
+                    hidden_states=latents,
+                    encoder_hidden_states=negative_prompt_embeds,
+                    encoder_hidden_states_mask=negative_prompt_mask,
+                )
+                guided_noise = QwenImage.compute_guided_noise(noise, noise_negative, config.guidance)
+                latents = config.scheduler.step(noise=guided_noise, timestep=t, latents=latents)
+                ctx.in_loop(t, latents)
+                mx.eval(latents)
+            except KeyboardInterrupt:  # noqa: PERF203
+                ctx.interruption(t, latents)
+                raise StopImageGenerationException(
+                    f"Stopping image generation at step {t + 1}/{config.num_inference_steps}"
+                )
+
+        ctx.after_loop(latents)
+        hook = type(self).decode_hook
+        if hook is not None:
+            hook(self)
+
+
 class LifecycleMarker:
     """Registered by FakeTeaCache where the real library registers its lifecycle callback."""
 
@@ -264,7 +405,7 @@ class FakeTeaCache:
             raise self.error
         if self.warning is not None:
             warnings.warn(self.warning, stacklevel=2)
-        variant = mlx_teacache.match_variant(flux.model_config, ZImage)
+        variant = mlx_teacache.match_variant(flux.model_config, type(flux).PIPELINE)
         assert variant is not None and variant.default_thresh is not None, "the plugin applied an unsupported model"
         requested = kwargs.get("rel_l1_thresh")
         handle = new_handle(

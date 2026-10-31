@@ -115,7 +115,10 @@ the copied block still matches `main()`. Each pinned value is recorded under a l
 was reviewed against: the releases the package supports, and the mflux `main` commit that was last reviewed. Each
 label also lists the versions that source reports (`REPORTED_VERSIONS`). A value no label holds fails. So does a mix
 of values from different labels, and so does an installed mflux whose version the matched label does not list (a
-new release that ships the reviewed `main` code, for example). When an mflux update turns it red:
+new release that ships the reviewed `main` code, for example). A part with no value under a label leaves that label
+open for the one-source check, so a command added after the last `main` review does not rule `main` out. The version
+check is strict: it reads only recorded values, so a release label that lacks an entry for a part fails the test.
+When an mflux update turns it red:
 
 1. Read mflux's diff of `src/mflux/models/z_image/cli/z_image_generate.py`.
 2. Bring `z_image.py` (and `_core.run`, if the flow after `load()` changed) in line with it. A new parser option
@@ -132,8 +135,13 @@ new release that ships the reviewed `main` code, for example). When an mflux upd
 - No test can download a model. `tests/conftest.py` sets `HF_HUB_OFFLINE=1` and points `HF_HOME`, `HF_HUB_CACHE`
   and `HF_XET_CACHE` at an empty temporary directory before anything imports mflux or huggingface_hub, because both
   read these once, at import.
-  It also makes the real `ZImage` class refuse to be built and runs every test in its own temporary directory.
-  `tests/test_isolation.py` checks all of that.
+  It also makes the real model classes refuse to be built and runs every test in its own temporary directory.
+  A command's model class is listed in `REAL_PIPELINES` and its mflux command module in `FAKES` (the name the
+  module loads the class by, and the fake that replaces it). `isolated_cli` stops every listed class from being built
+  and clears each fake's own `instances` and `fail_on_seed`; `run_command` swaps every fake in and runs the adapter
+  under its own command name. A new command adds its rows there and a fake with its own `PIPELINE`, `instances` and
+  `fail_on_seed`. `tests/test_isolation.py` checks all of that, including that every console script's model class
+  and command module are listed.
 - Fakes stand in for the mflux model class and for your library only; everything else is real mflux code.
 - After renaming, the run tests call your real `apply` on `FakeZImage`. Give your library a fake in `tests/_fakes.py`
   for them to use.

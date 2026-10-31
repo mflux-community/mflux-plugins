@@ -13,7 +13,7 @@ module-name = "mflux.extras.teacache"
 
 [project]
 name = "mflux-teacache"
-version = "0.1.3"
+version = "0.2.0"
 description = "TeaCache step skipping for mflux's command line, powered by mlx-teacache."
 readme = "README.md"
 license = "Apache-2.0"
@@ -47,6 +47,7 @@ Documentation = "https://github.com/mflux-community/mflux-plugins/tree/main/teac
 
 [project.scripts]
 mflux-generate-z-image-teacache = "mflux.extras.teacache.z_image:main"
+mflux-generate-qwen-teacache = "mflux.extras.teacache.qwen_image:main"
 
 [dependency-groups]
 dev = [

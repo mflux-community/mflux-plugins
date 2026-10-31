@@ -6,8 +6,8 @@ every command below from this folder.
 
 ## Project summary
 
-- Ships one package, `mflux.extras.teacache`, and one command, `mflux-generate-z-image-teacache`
-  (`mflux.extras.teacache.z_image:main`).
+- Ships one package, `mflux.extras.teacache`, and two commands: `mflux-generate-z-image-teacache`
+  (`mflux.extras.teacache.z_image:main`) and `mflux-generate-qwen-teacache` (`mflux.extras.teacache.qwen_image:main`).
 - mflux core loads and generates; mlx-teacache patches the loaded model. This package only connects them.
 
 ## Namespace contract (do not break)
@@ -46,8 +46,9 @@ src/mflux/extras/teacache/
   __init__.py   # __version__ only
   _core.py      # Adapter, run(): the flow every command shares
   z_image.py    # the Z-Image command: parser, the copied pre-load step, ADAPTER, main()
+  qwen_image.py # the Qwen-Image command: parser, validate() wrapper (refuses the original checkpoint), ADAPTER, main()
 tests/
-  _fakes.py         # FakeZImage, LoopingFakeZImage, FakeTeaCache
+  _fakes.py         # FakeZImage, LoopingFakeZImage, FakeQwenImage, LoopingFakeQwenImage, FakeTeaCache
   _fingerprint.py   # AST fingerprints for the drift test
   _marks.py         # warning filters shared by test modules
   test_*.py
@@ -76,33 +77,52 @@ optional hooks its command needs:
 - `before_validate(args)`;
 - `after_checks(args, model_config)`;
 - `active_steps(args, model_config)`, which defaults to mflux's own `Config.init_time_step`;
-- `library_checks_checkpoint`, for a family where mlx-teacache already tells custom checkpoints apart;
 - `calibrated_copies`, repo ids that hold the calibrated checkpoint's model at other precisions (8-bit and lower, or
   bf16; each model card declares it as `base_model`). They don't get the checkpoint warning, although the
-  coefficients were measured on one 8-bit build only. Check the model card on the Hub before you add one, and never
-  add a Turbo repo (`tests/test_refusals.py` checks that).
+  coefficients were measured on one build only: Z-Image at 8-bit, Qwen-Image-2512 at 4-bit applied at run time (`-q 4`).
+  For Qwen-Image, a pre-quantized copy is therefore unmeasured against the runtime `-q` the coefficients came from,
+  and so is any `-q` other than 4. The check ignores case, as the Hub and mlx-teacache do. Check
+  the model card on the Hub before you add one, and never add a Turbo repo (`tests/test_refusals.py` checks that).
 
 The Z-Image adapter's one hook (`warn_before_load`) calls mflux's tiling warning where that mflux has one, then
 `warn_ineffective_options`, which copies a block of statements from mflux's `main()`, because mflux has no
 `prepare()` step for it yet. Code copied from mflux is listed in `NOTICE`; a new adapter that
 copies more adds its file there.
 
+The Qwen-Image adapter has no hook and copies nothing. It wraps mflux's `QwenImageCommand.validate` in its own
+`validate`, which refuses before the load. mflux's Qwen-Image command loads any repo it is given on the
+Qwen-Image-2512 config, and mlx-teacache cannot tell the original Qwen-Image weights from 2512 there. So when
+`--model` names `Qwen/Qwen-Image` or one of its `ORIGINAL_COPIES` (case ignored), `validate` raises
+`ModelConfigError` with the pointer to mlx-teacache from Python, and `run` turns it into exit 2. A local folder
+can't be identified; it gets the checkpoint warning. Don't add a Hub repo to `calibrated_copies` unless its model
+card declares `Qwen/Qwen-Image-2512` as `base_model`, and put copies of the original in `ORIGINAL_COPIES`.
+
 ## When the drift test fails
 
 `tests/test_mflux_drift.py` pins mflux's Z-Image `build_parser()`, `main()`, `ZImageCommand.load` and
-`ZImage.generate_image` by AST digest. It also pins the parser's option strings and dests, the part of `main()` after
-`load()` (one row per adapter) and the step signatures, and it checks that the copied block still matches `main()`.
+`ZImage.generate_image` by AST digest, and the parts of mflux's Qwen-Image command the plugin calls or wraps
+(`qwen_image_generate.py` and `QwenImage.generate_image`). It also pins the parser's option strings and dests, the
+part of `main()` after `load()` (one row per adapter) and the step signatures, and it checks that the copied block still matches `main()`.
 Each pinned value is recorded under a label that names the mflux source it was reviewed against: the releases the
 package supports, and the mflux `main` commit that was last reviewed. Each label also lists the versions that source
 reports (`REPORTED_VERSIONS`). A value no label holds fails. So does a mix of values from different labels, and so
 does an installed mflux whose version the matched label does not list (a new release that ships the reviewed `main`
-code, for example). When an mflux update turns it red:
+code, for example).
 
-1. Read mflux's diff of `src/mflux/models/z_image/cli/z_image_generate.py`.
-2. Bring `z_image.py` (and `_core.run`, if the flow after `load()` changed) in line with it. A new parser option
-   that skips or caches steps needs a refusal and an entry in the refusal tests. Code that uses something only the
-   newer mflux has must still import and run on the oldest supported release.
-3. If `ZImage.generate_image` changed, bring `FakeZImage.generate_image` in `tests/_fakes.py` in line with it.
+A part with no value under a label leaves that label open for the one-source check, so a command added after the
+last `main` review does not rule `main` out. The version check is strict, though: it reads only the values that are
+recorded, so every part needs a value under a release's label. A release label that lacks one entry (a Qwen-Image
+part left out of the 0.24.0 review, say) fails the test.
+
+When an mflux update turns it red:
+
+1. Read mflux's diff of the command module that moved: `src/mflux/models/z_image/cli/z_image_generate.py` or
+   `src/mflux/models/qwen/cli/qwen_image_generate.py`.
+2. Bring `z_image.py` or `qwen_image.py` (and `_core.run`, if the flow after `load()` changed) in line with it. A new
+   parser option that skips or caches steps needs a refusal and an entry in the refusal tests. Code that uses
+   something only the newer mflux has must still import and run on the oldest supported release.
+3. If `ZImage.generate_image` changed, bring `FakeZImage.generate_image` in `tests/_fakes.py` in line with it. If
+   `QwenImage.generate_image` changed, do the same for `FakeQwenImage`.
 4. Record the values the failure messages print under a label naming the mflux source you reviewed: the release
    (`mflux v.0.24.0 released`), or the `main` commit and the review date (`mflux main <commit>, reviewed <date>`),
    with the versions that source reports. A newer `main` commit replaces the older `main` label; a release keeps its
@@ -113,11 +133,19 @@ code, for example). When an mflux update turns it red:
 - No test can download a model. `tests/conftest.py` sets `HF_HUB_OFFLINE=1` and points `HF_HOME`, `HF_HUB_CACHE`
   and `HF_XET_CACHE` at an empty temporary directory before anything imports mflux or huggingface_hub, because both
   read these once, at import.
-  It also forces huggingface_hub's offline flag, makes the real `ZImage` class refuse to be built, and runs every
-  test in its own temporary directory. `tests/test_isolation.py` checks all of that.
+  It also forces huggingface_hub's offline flag, makes the real model classes refuse to be built, and runs every
+  test in its own temporary directory.
+  A command's model class is listed in `REAL_PIPELINES` and its mflux command module in `FAKES` (the name the
+  module loads the class by, and the fake that replaces it). `isolated_cli` stops every listed class from being built
+  and clears each fake's own `instances` and `fail_on_seed`; `run_command` swaps every fake in and runs the adapter
+  under its own command name. A new command adds its rows there and a fake with its own `PIPELINE`, `instances` and
+  `fail_on_seed`. `tests/test_isolation.py` checks all of that, including that every console script's model class
+  and command module are listed.
 - Fakes stand in for the mflux model class and for `apply_teacache` only; everything else is real mflux and
-  mlx-teacache code. `tests/test_real_teacache.py` runs the real `apply_teacache` once, on `LoopingFakeZImage`,
-  which runs mflux's denoising loop over a tiny transformer with random weights it never loads. `FakeTeaCache`
+  mlx-teacache code. `tests/test_real_teacache.py` runs the real `apply_teacache` on `LoopingFakeZImage` and on
+  `LoopingFakeQwenImage`, which run mflux's denoising loop over a tiny transformer with random weights they never
+  load. The Qwen tests there also check that both classifier-free guidance branches follow one skip decision, and that
+  `--low-ram` and `--pid-decode` release the transformer before the decode. `FakeTeaCache`
   builds a real handle through mlx-teacache internals that are not public API (`mlx_teacache.handle.VariantPatch`,
   the `TeaCacheHandle` constructor, `TeaCacheStats.record` and `finalize_last_generation`). If an mlx-teacache
   release changes them, fix the fake, not the plugin.
