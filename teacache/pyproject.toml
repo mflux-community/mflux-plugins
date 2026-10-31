@@ -47,6 +47,7 @@ Documentation = "https://github.com/mflux-community/mflux-plugins/tree/main/teac
 
 [project.scripts]
 mflux-generate-z-image-teacache = "mflux.extras.teacache.z_image:main"
+mflux-generate-qwen-teacache = "mflux.extras.teacache.qwen_image:main"
 
 [dependency-groups]
 dev = [

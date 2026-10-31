@@ -1,5 +1,6 @@
 """The guards that keep every test offline, away from real weights, and out of the repository."""
 
+import importlib
 import os
 import subprocess
 import sys
@@ -7,8 +8,12 @@ from pathlib import Path
 
 import huggingface_hub.constants
 import pytest
-from mflux.models.common.config.model_config import AVAILABLE_MODELS
-from mflux.models.z_image.variants.z_image import ZImage
+from conftest import FAKES, REAL_PIPELINES
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 TESTS = Path(__file__).resolve().parent
 
@@ -38,11 +43,23 @@ def test_the_users_own_cache_variables_are_replaced(tmp_path: Path) -> None:
     assert (hub.parent, xet.parent) == (home, home)
 
 
-def test_the_real_model_class_cannot_be_built() -> None:
-    """Bug: the autouse guard is dropped, so a test that skips the run_command fixture constructs the real ZImage and
-    loads weights from a cache or the Hub."""
-    with pytest.raises(AssertionError, match="constructed the real ZImage"):
-        ZImage(model_config=AVAILABLE_MODELS["z-image"])
+@pytest.mark.parametrize("pipeline", REAL_PIPELINES, ids=lambda pipeline: pipeline.__name__)
+def test_the_real_model_class_cannot_be_built(pipeline: type) -> None:
+    """Bug: the autouse guard is dropped for one model class, so a test that skips the run_command fixture constructs
+    the real class and loads weights from a cache or the Hub."""
+    with pytest.raises(AssertionError, match=f"constructed the real {pipeline.__name__}"):
+        pipeline()
+
+
+def test_every_command_has_a_guard_and_a_fake() -> None:
+    """Bug: a command's model class is missing from REAL_PIPELINES or its mflux command module from FAKES, so a test
+    of that command builds the real class (and loads weights) instead of the fake."""
+    scripts = tomllib.loads((TESTS.parent / "pyproject.toml").read_text())["project"]["scripts"]
+    adapters = [importlib.import_module(target.split(":")[0]).ADAPTER for target in scripts.values()]
+    assert {adapter.pipeline for adapter in adapters} == set(REAL_PIPELINES)
+    assert {sys.modules[adapter.load.__module__] for adapter in adapters} == set(FAKES)
+    for module, (name, fake) in FAKES.items():
+        assert getattr(module, name) is fake.PIPELINE, f"{fake.__name__} replaces {module.__name__}.{name}"
 
 
 def test_each_test_runs_in_its_own_directory(tmp_path: Path) -> None:

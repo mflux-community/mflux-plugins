@@ -9,12 +9,12 @@ from types import SimpleNamespace
 import mlx_teacache
 import PIL.Image
 import pytest
-from _fakes import FakeZImage, commit_generation, new_handle
+from _fakes import FakeQwenImage, FakeZImage, commit_generation, new_handle
 from _marks import SIDECAR_LEFT_OPEN_MESSAGE
 from mflux.utils.exceptions import StopImageGenerationException
 from mlx_teacache import TeaCacheUntestedMfluxWarning
 
-from mflux.extras.teacache import _core
+from mflux.extras.teacache import _core, qwen_image, z_image
 
 BASE = ["--prompt", "x", "--steps", "5"]
 # This package's version as pyproject.toml declares it: read from the source file, not through the installed
@@ -237,3 +237,100 @@ def test_a_newer_mflux_warns_and_still_runs(run_command, teacache, tmp_path) -> 
     with pytest.warns(TeaCacheUntestedMfluxWarning):
         run_command([*BASE, "--seed", "7", "--output", str(tmp_path / "out.png")])
     assert (tmp_path / "out.png").is_file()
+
+
+QWEN_BASE = ["--prompt", "x", "--steps", "5"]
+
+
+def test_a_qwen_sidecar_replays_what_mflux_recorded_without_its_threshold(run_command, teacache, tmp_path) -> None:
+    """Bug: replaying the Qwen command's sidecar with -C loses an option mflux recorded (seed, prompt, negative prompt,
+    steps, size) or replays one mflux does not, reads back teacache_threshold, or warns that Qwen/Qwen-Image-2512, the
+    model the sidecar names, is a custom checkpoint."""
+    first = tmp_path / "first.png"
+    run_command(
+        [
+            "--prompt", "a red apple",
+            "--negative-prompt", "blurry",
+            "--seed", "7",
+            "--steps", "6",
+            "--width", "320", "--height", "192",
+            "--guidance", "4.0",
+            "--teacache-threshold", "0.3",
+            "--make-conf",
+            "--output", str(first),
+        ],
+        qwen_image.ADAPTER,
+    )  # fmt: skip
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        warnings.filterwarnings("ignore", message=SIDECAR_LEFT_OPEN_MESSAGE, category=ResourceWarning)
+        run_command(
+            ["-C", str(first.with_suffix(".metadata.json")), "--output", str(tmp_path / "replay.png")],
+            qwen_image.ADAPTER,
+        )
+    assert teacache.calls == [{"rel_l1_thresh": 0.3}, {"rel_l1_thresh": None}]
+    replayed = FakeQwenImage.instances[1].generate_calls[0]
+    assert {key: replayed[key] for key in ("seed", "prompt", "num_inference_steps", "width", "height")} == {
+        "seed": 7,
+        "prompt": "a red apple",
+        "num_inference_steps": 6,
+        "width": 320,
+        "height": 192,
+    }
+    # mflux 0.22 records guidance only for a model config that declares guidance support (GeneratedImage), and the
+    # Qwen-Image config does not, so a replay of mflux-generate-qwen's own sidecar runs at the 3.5 default as well.
+    # The sidecar records no scheduler either; the replay gets the parser's "linear".
+    assert (replayed["guidance"], replayed["negative_prompt"], replayed["scheduler"]) == (3.5, "blurry", "linear")
+    assert (tmp_path / "replay.png").is_file()
+
+
+def test_a_qwen_failure_after_load_exits_one_naming_the_plain_command(run_command, teacache, capsys) -> None:
+    """Bug: an error during a Qwen generation is swallowed, or the hint names the Z-Image command."""
+    FakeQwenImage.fail_on_seed[7] = RuntimeError("boom")
+    with pytest.raises(SystemExit) as exc:
+        run_command([*QWEN_BASE, "--seed", "7"], qwen_image.ADAPTER)
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "RuntimeError: boom" in err
+    assert (
+        "mflux-generate-qwen-teacache: error: the run failed (traceback above). "
+        "Run mflux-generate-qwen to generate without TeaCache."
+    ) in err
+
+
+def test_a_stopped_qwen_generation_is_printed_and_exits_zero(run_command, teacache, tmp_path, capsys) -> None:
+    """Bug: StopImageGenerationException from the Qwen loop (Ctrl-C, battery limit) becomes a traceback or exit 1, or
+    the next seed still runs, unlike mflux-generate-qwen."""
+    FakeQwenImage.fail_on_seed[7] = StopImageGenerationException("Stopping image generation at step 2/5")
+    run_command([*QWEN_BASE, "--seed", "7", "8", "--output", str(tmp_path / "out.png")], qwen_image.ADAPTER)
+    assert "Stopping image generation at step 2/5" in capsys.readouterr().out
+    assert len(FakeQwenImage.instances[0].generate_calls) == 1
+    assert list(tmp_path.glob("out*")) == []
+
+
+@pytest.mark.parametrize(
+    ("adapter", "model", "line"),
+    [
+        (
+            "z_image",
+            "dev",
+            "mflux-generate-z-image-teacache: error: 'dev' is not Tongyi-MAI/Z-Image; this CLI only accepts the "
+            "aliases ['z-image', 'zimage', 'z-image-turbo', 'zimage-turbo'].",
+        ),
+        (
+            "qwen_image",
+            "qwen-image-2.1",
+            "mflux-generate-qwen-teacache: error: 'qwen-image-2.1' is not Qwen/Qwen-Image-2512; this CLI only accepts "
+            "the aliases ['qwen-image', 'qwen', 'qwen-image-2512', 'qwen-2512'].",
+        ),
+    ],
+)
+def test_mflux_model_refusal_line_ends_with_mfluxs_own_text(run_command, teacache, capsys, adapter, model, line):
+    """Bug: the plugin rewords, prefixes or cuts mflux's ModelConfigError (the Qwen wrapper around validate catching
+    and re-raising it, say), so the refusal no longer reads like the plain command's."""
+    with pytest.raises(SystemExit) as exc:
+        run_command(
+            ["--prompt", "x", "--model", model], {"z_image": z_image, "qwen_image": qwen_image}[adapter].ADAPTER
+        )
+    assert exc.value.code == 2
+    assert capsys.readouterr().err.splitlines()[-1] == line

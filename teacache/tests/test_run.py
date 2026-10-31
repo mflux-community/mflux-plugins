@@ -1,15 +1,16 @@
-"""The plugin command runs mflux's own Z-Image steps, with TeaCache applied in between."""
+"""Each plugin command runs mflux's own steps (Z-Image, Qwen-Image), with TeaCache applied in between."""
 
 import dataclasses
+import json
 from pathlib import Path
 
 import PIL.Image
 import pytest
-from _fakes import FakeZImage
+from _fakes import FakeQwenImage, FakeZImage
 from mflux.callbacks.instances.memory_saver import MemorySaver
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
 
-from mflux.extras.teacache import z_image
+from mflux.extras.teacache import qwen_image, z_image
 
 
 @pytest.fixture
@@ -142,3 +143,83 @@ def test_teacache_is_applied_before_mflux_registers_its_callbacks(run_command, t
     kinds = [type(callback).__name__ for callback in after_loop]
     assert kinds.index("LifecycleMarker") < kinds.index("MemorySaver")
     assert isinstance(after_loop[-1], MemorySaver)
+
+
+def test_qwen_every_flag_reaches_mflux_steps_unchanged(run_command, teacache, tmp_path, ref_png, lora_file) -> None:
+    """Bug: the Qwen command builds its own model or generate call instead of calling mflux's load()/generate(), a
+    flag (LoRA scale, img2img strength, guidance, negative prompt, PiD, -q) is dropped or rewritten on the way, or
+    TeaCache is applied once per seed instead of once per run."""
+    run_command(
+        [
+            "--prompt", "a puffin",
+            "--seed", "7", "8",
+            "--steps", "20",
+            "--width", "320", "--height", "192",
+            "--image", str(ref_png), "0.5",
+            "--guidance", "4.0",
+            "--negative-prompt", "blurry",
+            "--pid-decode",
+            "--lora", str(lora_file), "0.5",
+            "-q", "4",
+            "--make-conf",
+            "--output", str(tmp_path / "out.png"),
+        ],
+        qwen_image.ADAPTER,
+    )  # fmt: skip
+    (model,) = FakeQwenImage.instances
+    assert len(teacache.calls) == 1
+    assert model.init_kwargs == {
+        "model_config": AVAILABLE_MODELS["qwen-image"],
+        "quantize": 4,
+        "model_path": None,
+        "lora_paths": [str(lora_file)],
+        "lora_scales": [0.5],
+        "bake_lora": True,
+    }
+    expected = {
+        "prompt": "a puffin",
+        "negative_prompt": "blurry",
+        "width": 320,
+        "height": 192,
+        "guidance": 4.0,
+        "scheduler": "linear",
+        "image_path": ref_png,
+        "num_inference_steps": 20,
+        "image_strength": 0.5,
+        "pid_decode": True,
+        "pid_degrade_sigma": 0.0,
+    }
+    assert model.generate_calls == [{"seed": 7, **expected}, {"seed": 8, **expected}]
+    assert (tmp_path / "out_seed_7.png").is_file()
+    assert (tmp_path / "out_seed_8.metadata.json").is_file()
+
+
+def test_qwen_default_run(run_command, teacache, tmp_path) -> None:
+    """Bug: the Qwen command replaces mflux's defaults (20 steps, guidance 3.5, the linear scheduler, 1024x1024 from
+    the 1x size without an --image) with its own or passes the unresolved size, loads another model than
+    Qwen-Image-2512, or records another variant or threshold than mlx-teacache's for it (qwen-image-2512, 0.25)."""
+    out = tmp_path / "out.png"
+    run_command(["--prompt", "x", "--seed", "1", "--make-conf", "--output", str(out)], qwen_image.ADAPTER)
+    (model,) = FakeQwenImage.instances
+    assert model.init_kwargs["model_config"] is AVAILABLE_MODELS["qwen-image"]
+    assert model.init_kwargs["model_path"] is None
+    assert model.generate_calls == [
+        {
+            "seed": 1,
+            "prompt": "x",
+            "negative_prompt": "",
+            "width": 1024,
+            "height": 1024,
+            "guidance": 3.5,
+            "scheduler": "linear",
+            "image_path": None,
+            "num_inference_steps": 20,
+            "image_strength": 0.4,
+            "pid_decode": False,
+            "pid_degrade_sigma": 0.0,
+        }
+    ]
+    assert teacache.calls == [{"rel_l1_thresh": None}]
+    metadata = json.loads(out.with_suffix(".metadata.json").read_text())
+    assert metadata["model"] == "Qwen/Qwen-Image-2512"
+    assert (metadata["teacache_variant"], metadata["teacache_threshold"]) == ("qwen-image-2512", 0.25)
