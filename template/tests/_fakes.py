@@ -48,6 +48,7 @@ class FakeZImage:
     names to local files), and quantize is the requested bit width (the real WeightApplier can
     resolve it from the checkpoint's stored quantization)."""
 
+    PIPELINE: ClassVar[type] = ZImage
     init_signature = inspect.signature(ZImage.__init__)  # read at import, before conftest blocks the real __init__
     generate_signature = inspect.signature(ZImage.generate_image)
     instances: ClassVar[list["FakeZImage"]] = []

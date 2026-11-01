@@ -55,12 +55,9 @@ class Adapter:
       mflux's tiling, guidance and negative-prompt warnings), so a refused run prints one message.
     - active_steps(args, model_config): the denoising steps mflux will run; None uses
       default_active_steps (mflux's own Config.init_time_step).
-    - library_checks_checkpoint: True when mlx-teacache's VariantInfo.calibrated already tells a
-      custom checkpoint apart (Qwen-Image); it switches off this package's model-path warning so
-      the user sees one warning, not two.
     - calibrated_copies: repo ids known to hold the calibrated checkpoint's model at other precisions (copies
-      whose model card declares it as base_model); --model-path set to one of them does not warn. TeaCache's
-      settings were measured on one build only, so these run unmeasured, just without the warning."""
+      whose model card declares it as base_model); --model set to one of them, in any case, does not warn.
+      TeaCache's settings were measured on one build only, so these run unmeasured, just without the warning."""
 
     command: str
     plain_command: str
@@ -74,7 +71,6 @@ class Adapter:
     before_validate: Callable[[Namespace], None] | None = None
     after_checks: Callable[[Namespace, ModelConfig], None] | None = None
     active_steps: Callable[[Namespace, ModelConfig], int] | None = None
-    library_checks_checkpoint: bool = False
     calibrated_copies: tuple[str, ...] = ()
 
 
@@ -215,12 +211,9 @@ def _warn_unverified_checkpoint(
             stacklevel=3,
         )
         return
-    if (
-        adapter.library_checks_checkpoint
-        or model_path is None
-        or model_path == model_config.model_name
-        or model_path in adapter.calibrated_copies
-    ):
+    # Hub repo ids are case-insensitive, and so is mlx-teacache's own comparison.
+    known = {model_config.model_name.casefold(), *(repo.casefold() for repo in adapter.calibrated_copies)}
+    if model_path is None or model_path.casefold() in known:
         return
     warnings.warn(
         TeaCacheUncalibratedCheckpointWarning(

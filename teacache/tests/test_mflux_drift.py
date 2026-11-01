@@ -1,9 +1,10 @@
-"""Pins the parts of mflux's Z-Image command this package calls or copies.
+"""Pins the parts of mflux's Z-Image and Qwen-Image commands this package calls or copies.
 
 Every pinned value is recorded once per mflux source it was reviewed against, under a label that names that source
 (a release, or a main commit and the review date). A value no label holds fails. When one fails after an mflux
-update: read mflux's diff of src/mflux/models/z_image/cli/z_image_generate.py, bring z_image.py (and _core.run, if
-the flow after load() changed) in line with it, then add the values the failure messages print under a new label."""
+update: read mflux's diff of the command's file (src/mflux/models/z_image/cli/z_image_generate.py or
+src/mflux/models/qwen/cli/qwen_image_generate.py), bring z_image.py or qwen_image.py (and _core.run, if the flow after
+load() changed) in line with it, then add the values the failure messages print under a new label."""
 
 import builtins
 import importlib
@@ -21,13 +22,16 @@ import pytest
 from _fakes import FakeZImage
 from _fingerprint import ast_fingerprint, function_body_dumps, statements_fingerprint_from
 from mflux.models.common.config.model_config import ModelConfig
+from mflux.models.qwen.cli import qwen_image_generate
+from mflux.models.qwen.cli.qwen_image_generate import QwenImageCommand
+from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
 from mflux.models.z_image.cli import z_image_generate
 from mflux.models.z_image.cli.z_image_generate import ZImageCommand
 from mflux.models.z_image.variants.z_image import ZImage
 from mflux.utils.generated_image import GeneratedImage
 
 import mflux
-from mflux.extras.teacache import z_image
+from mflux.extras.teacache import qwen_image, z_image
 
 # mflux main a3b21fc added VAEDecodeOptions (the --vae-full-precision decode, and a warning that --vae-tiling no
 # longer changes the decode); the mflux 0.22.0 / 0.23.0 releases have neither.
@@ -88,6 +92,72 @@ OPTIONS = {
     RELEASED_0_24: VAE_FULL_PRECISION_OPTIONS,
 }
 
+# The Qwen-Image command's parts, recorded on PyPI 0.22.0 and cross-checked on the 0.22.0 and 0.23.0 wheels, whose
+# qwen_image_generate.py and variants/txt2img/qwen_image.py are the same. They have no value under MAIN yet: a part
+# with no value under a label leaves that label open in the whole-set check (sources_not_ruled_out), and its own test
+# still has to match a recorded value. QwenImage.generate_image's value is the one mlx-teacache records for mflux
+# 0.22.0. PyPI 0.24.0, reviewed 2026-10-29 on CPython 3.13: both files are the same as in 0.23.0, and so are the
+# parser helpers the Qwen-Image parser calls (add_lora_arguments keeps bake_by_default=True; it does not call
+# add_cfg_end_arguments), so every Qwen-Image value is the released one.
+QWEN_BUILD_PARSER_DIGESTS = {RELEASED: "9b3d21e5b122a1b9", RELEASED_0_24: "9b3d21e5b122a1b9"}
+QWEN_MAIN_DIGESTS = {RELEASED: "74c1b41aa77a0ef0", RELEASED_0_24: "74c1b41aa77a0ef0"}
+QWEN_VALIDATE_DIGESTS = {RELEASED: "7e09191dff32f856", RELEASED_0_24: "7e09191dff32f856"}
+QWEN_LOAD_DIGESTS = {RELEASED: "b18636d16409e098", RELEASED_0_24: "b18636d16409e098"}
+QWEN_GENERATE_DIGESTS = {RELEASED: "ee92a1a33b87793d", RELEASED_0_24: "ee92a1a33b87793d"}
+QWEN_GENERATE_IMAGE_DIGESTS = {RELEASED: "9e6846e3f5ed09bb", RELEASED_0_24: "9e6846e3f5ed09bb"}
+# Per pinned Qwen part: the function, its recorded values, and what to bring in line when it moves.
+QWEN_PINS = {
+    "qwen_image_generate.build_parser": (
+        qwen_image_generate.build_parser,
+        QWEN_BUILD_PARSER_DIGESTS,
+        "qwen_image.build_parser and the refusal tests (an option that skips or caches steps needs a refusal)",
+    ),
+    "qwen_image_generate.main": (
+        qwen_image_generate.main,
+        QWEN_MAIN_DIGESTS,
+        "a new pre-load step in main() needs an after_checks hook in qwen_image.py",
+    ),
+    "QwenImageCommand.validate": (
+        QwenImageCommand.validate,
+        QWEN_VALIDATE_DIGESTS,
+        "qwen_image.validate, which wraps it and refuses the original checkpoint first",
+    ),
+    "QwenImageCommand.load": (
+        QwenImageCommand.load,
+        QWEN_LOAD_DIGESTS,
+        "_core.run, which calls load() directly and applies TeaCache to what it returns",
+    ),
+    "QwenImageCommand.generate": (
+        QwenImageCommand.generate,
+        QWEN_GENERATE_DIGESTS,
+        "_core.run, which passes it the parsed arguments and relies on it resolving --width and --height",
+    ),
+    "QwenImage.generate_image": (
+        QwenImage.generate_image,
+        QWEN_GENERATE_IMAGE_DIGESTS,
+        "FakeQwenImage.generate_image and LoopingFakeQwenImage.denoise in tests/_fakes.py",
+    ),
+}
+# Every option string and dest of the Qwen-Image parser, sorted. Against the Z-Image tuples above it lacks
+# --compute-precision, --float32 and --no-float32 (dests compute_precision and float32) and adds nothing.
+QWEN_OPTION_STRINGS = (
+    "--auto-seeds", "--bake-lora", "--base-model", "--battery-percentage-stop-limit", "--config-from-conf",
+    "--config-from-metadata", "--guidance", "--height", "--help", "--image", "--image-path", "--image-strength",
+    "--lora", "--lora-paths", "--lora-scales", "--lora-style", "--low-ram", "--make-conf", "--metadata",
+    "--mlx-cache-limit-gb", "--model", "--negative-prompt", "--no-bake-lora", "--no-exif", "--no-metadata",
+    "--no-pid-decode", "--output", "--pid-decode", "--pid-degrade-sigma", "--prompt", "--prompt-file", "--quantize",
+    "--scheduler", "--seed", "--steps", "--stepwise-image-output-dir", "--vae-tile-size", "--vae-tiling", "--verbose",
+    "--width", "-B", "-C", "-h", "-m", "-q", "-v",
+)  # fmt: skip
+QWEN_DESTS = (
+    "auto_seeds", "bake_lora", "base_model", "battery_percentage_stop_limit", "config_from_metadata", "guidance",
+    "height", "help", "image", "image_path", "image_strength", "lora", "lora_paths", "lora_scales", "lora_style",
+    "low_ram", "metadata", "mlx_cache_limit_gb", "model", "negative_prompt", "no_metadata", "output", "pid_decode",
+    "pid_degrade_sigma", "prompt", "prompt_file", "quantize", "scheduler", "seed", "steps",
+    "stepwise_image_output_dir", "vae_tile_size", "vae_tiling", "verbose", "width",
+)  # fmt: skip
+QWEN_OPTIONS = {RELEASED: (QWEN_OPTION_STRINGS, QWEN_DESTS), RELEASED_0_24: (QWEN_OPTION_STRINGS, QWEN_DESTS)}
+
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
 # from there on (load, callback registration, the per-seed generate/save loop, the except/finally). _core.run mirrors
 # that tail; a new adapter adds its row here.
@@ -96,6 +166,13 @@ POST_LOAD = {
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
         {RELEASED: "812cb2e320c4eaee", MAIN: "812cb2e320c4eaee", RELEASED_0_24: "812cb2e320c4eaee"},
+    ),
+    # mflux's Qwen main() resolves the sizes into a copy of args before its seed loop; _core.run passes the parsed
+    # args, which changes no output because QwenImageCommand.generate resolves them again.
+    "mflux-generate-qwen-teacache": (
+        qwen_image_generate.main,
+        "model = QwenImageCommand.load(args)",
+        {RELEASED: "ff216a1e1a70ec70", RELEASED_0_24: "ff216a1e1a70ec70"},
     ),
 }
 
@@ -110,8 +187,15 @@ def reviewed_sources(accepted: Mapping[str, object], actual: object) -> set[str]
     return {source for source, value in accepted.items() if value == actual}
 
 
-def parser_options() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    parser = z_image_generate.build_parser()
+def sources_not_ruled_out(accepted: Mapping[str, object], actual: object, labels: tuple[str, ...]) -> set[str]:
+    """The labels `actual` leaves possible for the whole set: those under which it is the recorded value, plus those
+    under which this part has no value yet (a command added since that source was last reviewed). A part's own test
+    still requires a recorded value."""
+    return reviewed_sources(accepted, actual) | {label for label in labels if label not in accepted}
+
+
+def parser_options(module: Any = z_image_generate) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    parser = module.build_parser()
     strings = tuple(sorted(option for action in parser._actions for option in action.option_strings))
     dests = tuple(sorted({action.dest for action in parser._actions}))
     return strings, dests
@@ -172,16 +256,56 @@ def test_mflux_load_is_a_reviewed_one() -> None:
     assert reviewed_sources(LOAD_DIGESTS, actual), f"ZImageCommand.load changed: {REVIEW_FIRST} {actual}"
 
 
-def pinned_sources() -> dict[str, set[str]]:
-    """Per pinned part, the labels of the reviewed mflux sources that hold its current value."""
+@pytest.mark.parametrize("part", sorted(QWEN_PINS))
+def test_mflux_qwen_part_is_a_reviewed_one(part: str) -> None:
+    """Bug: mflux changes a part of its Qwen-Image command that the plugin calls, wraps or reproduces (a parser
+    option, a pre-load step in main(), what validate accepts, what load builds, the size resolve in generate, what
+    generate_image records), and the plugin keeps running it unreviewed."""
+    function, digests, review = QWEN_PINS[part]
+    actual = ast_fingerprint(function)
+    assert reviewed_sources(digests, actual), f"{part} changed: bring {review} in line; {REVIEW_FIRST} {actual}"
+
+
+def test_mflux_qwen_parser_options_are_reviewed_ones() -> None:
+    """Bug: mflux adds an option to the Qwen-Image parser through a shared helper (a step-cache flag, say);
+    build_parser's own digest does not move, and the plugin passes the flag through without a refusal."""
+    strings, dests = parser_options(qwen_image_generate)
+    assert reviewed_sources(QWEN_OPTIONS, (strings, dests)), (
+        f"qwen_image_generate.build_parser() options changed: {REVIEW_FIRST}\n{strings}\n{dests}"
+    )
+
+
+def test_a_part_with_no_value_under_a_label_leaves_that_label_open() -> None:
+    """Bug: the whole-set check reads a part recorded under the release only (a command added since mflux main was
+    last reviewed) as ruling main out, so on mflux main it fails although every part's own pin passes; or it leaves a
+    label open where the part has a different value there, so a mix of two sources passes."""
+    labels = ("release", "main")
+    assert sources_not_ruled_out({"release": "a"}, "a", labels) == {"release", "main"}
+    assert sources_not_ruled_out({"release": "a"}, "b", labels) == {"main"}
+    assert sources_not_ruled_out({"release": "a", "main": "b"}, "a", labels) == {"release"}
+    assert sources_not_ruled_out({"release": "a", "main": "b"}, "c", labels) == set()
+
+
+def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
+    """Per pinned part, the labels of the reviewed mflux sources it leaves possible (sources_not_ruled_out), or with
+    recorded_only those under which its value is recorded (reviewed_sources)."""
+    labels = tuple(REPORTED_VERSIONS)
+
+    def possible(accepted: Mapping[str, object], actual: object) -> set[str]:
+        if recorded_only:
+            return reviewed_sources(accepted, actual)
+        return sources_not_ruled_out(accepted, actual, labels)
+
     return {
-        "build_parser": reviewed_sources(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
-        "options": reviewed_sources(OPTIONS, parser_options()),
-        "main": reviewed_sources(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
-        "load": reviewed_sources(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
-        "generate_image": reviewed_sources(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
+        "build_parser": possible(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
+        "options": possible(OPTIONS, parser_options()),
+        "main": possible(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
+        "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
+        "generate_image": possible(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
+        "qwen options": possible(QWEN_OPTIONS, parser_options(qwen_image_generate)),
+        **{part: possible(digests, ast_fingerprint(function)) for part, (function, digests, _) in QWEN_PINS.items()},
         **{
-            f"post-load {command}": reviewed_sources(digests, statements_fingerprint_from(main, first_statement))
+            f"post-load {command}": possible(digests, statements_fingerprint_from(main, first_statement))
             for command, (main, first_statement, digests) in POST_LOAD.items()
         },
     }
@@ -204,13 +328,14 @@ def _imported_mflux_is_the_installed_one() -> bool:
 @pytest.mark.skipif(not _imported_mflux_is_the_installed_one(), reason="the imported mflux is not the installed one")
 def test_the_mflux_version_is_one_the_matched_source_reports() -> None:
     """Bug: an mflux release ships the code last reviewed on main, every pin matches the main label, and nothing asks
-    for a label naming that release."""
+    for a label naming that release; or a part has no value under that release's label (the Qwen-Image command left
+    out of its review), and the release passes for that command unreviewed."""
     version = importlib.metadata.version("mflux")
-    matched = sorted(set.intersection(*pinned_sources().values()))
+    matched = sorted(set.intersection(*pinned_sources(recorded_only=True).values()))
     assert any(version in REPORTED_VERSIONS[source] for source in matched), (
         f"mflux {version} holds the values recorded under {matched}, a source that reports "
-        f"{[REPORTED_VERSIONS[source] for source in matched]}: review mflux {version} and record these values under "
-        f"a label for that release, with its version"
+        f"{[REPORTED_VERSIONS[source] for source in matched]}: review mflux {version} and record every part's value "
+        f"under a label for that release, with its version"
     )
 
 
@@ -234,6 +359,16 @@ def test_command_steps_keep_the_signatures_the_plugin_calls() -> None:
     assert list(inspect.signature(ZImageCommand.generate).parameters) == ["model", "args", "seed", "prompt"]
     assert inspect.signature(ZImageCommand.validate).return_annotation is ModelConfig
     assert inspect.signature(ZImageCommand.generate).return_annotation is GeneratedImage
+
+
+def test_qwen_command_steps_keep_the_signatures_the_plugin_calls() -> None:
+    """Bug: mflux renames or reorders a QwenImageCommand step parameter, and _core.run's positional
+    generate(model, args, seed, prompt) call (or qwen_image.validate's call) binds the wrong values."""
+    assert list(inspect.signature(QwenImageCommand.validate).parameters) == ["args"]
+    assert list(inspect.signature(QwenImageCommand.load).parameters) == ["args"]
+    assert list(inspect.signature(QwenImageCommand.generate).parameters) == ["model", "args", "seed", "prompt"]
+    assert inspect.signature(QwenImageCommand.validate).return_annotation is ModelConfig
+    assert inspect.signature(QwenImageCommand.generate).return_annotation is GeneratedImage
 
 
 def _after_checks_on(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
@@ -335,3 +470,13 @@ def test_load_returns_the_pipeline_the_adapter_names() -> None:
     assert inspect.signature(ZImageCommand.load).return_annotation is ZImage
     assert z_image.PIPELINE is ZImage
     assert z_image.ADAPTER.pipeline is ZImage
+
+
+def test_qwen_load_returns_the_pipeline_the_adapter_names() -> None:
+    """Bug: mflux's QwenImageCommand.load starts returning another class, or the Qwen adapter names another pipeline,
+    so match_variant is asked about the wrong class and the pre-load check accepts or refuses the wrong models."""
+    assert inspect.signature(QwenImageCommand.load).return_annotation is QwenImage
+    assert qwen_image.PIPELINE is QwenImage
+    assert qwen_image.ADAPTER.pipeline is QwenImage
+    assert qwen_image.ADAPTER.load is QwenImageCommand.load
+    assert qwen_image.ADAPTER.generate is QwenImageCommand.generate
