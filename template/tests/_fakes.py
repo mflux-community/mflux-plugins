@@ -10,38 +10,28 @@ import mlx.core as mx
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.models.common.compute_precision.compute_precision import ComputePrecision
 from mflux.models.common.config.config import Config
+from mflux.models.common.vae.block_decoder import VAEBlockDecoder
+from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
 from mflux.models.z_image.variants.z_image import ZImage
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.image_util import ImageUtil
 
-try:  # Not in the mflux 0.22.0 / 0.23.0 releases.
-    from mflux.models.common.vae.block_decoder import VAEBlockDecoder
-    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
-except ModuleNotFoundError as exc:
-    if exc.name not in ("mflux.models.common.vae.block_decoder", "mflux.models.common.vae.vae_decode_options"):
-        raise
-    VAEBlockDecoder = None  # the mflux 0.22.0 / 0.23.0 releases: one Z-Image decode, nothing to record about it
-    VAEDecodeOptions = None
-
 
 class FakeVAE:
-    """Stands in for ZImage.vae, which only the decode reads. On an mflux with VAEDecodeOptions it carries the decode
-    mode ZImageInitializer sets (row strips) for VAEDecodeOptions.apply to switch; the mflux 0.22.0 /
-    0.23.0 releases have no decode mode."""
+    """Stands in for ZImage.vae, which only the decode reads. It carries the decode mode ZImageInitializer sets (row
+    strips) for VAEDecodeOptions.apply to switch."""
 
     def __init__(self) -> None:
-        if VAEBlockDecoder is not None:
-            self.decode_mode = VAEBlockDecoder.LOW_MEMORY
+        self.decode_mode = VAEBlockDecoder.LOW_MEMORY
 
 
 class FakeZImage:
     """Stands in for ZImage. Construction is what ZImageCommand.load() does, so an empty
-    `instances` means no weights were loaded. generate_image builds its GeneratedImage the way mflux
-    0.22's ZImage.generate_image does (guidance forced to 0.0 on a model without guidance, the scheduler
+    `instances` means no weights were loaded. generate_image builds its GeneratedImage the way the locked
+    mflux's ZImage.generate_image does (guidance forced to 0.0 on a model without guidance, the scheduler
     default resolved, a real Config, the real ImageUtil.to_image with the same keywords), so a save
     writes a real PNG and a real JSON sidecar with the fields mflux writes: steps, guidance, image_path,
-    image_strength, pid_*, and float32 / compute_precision (and, on an mflux that records it, vae_full_precision)
-    in generation_parameters.
+    image_strength, pid_*, and float32 / compute_precision / vae_full_precision in generation_parameters.
 
     Two fields are simpler than the real ones, safe because no test here reads them back:
     lora_paths / lora_scales are the values passed to __init__ (the real LoRALoader resolves
@@ -81,7 +71,7 @@ class FakeZImage:
         if failure is not None:
             raise failure
         call = bound.arguments
-        # From here on, the steps of mflux 0.22's ZImage.generate_image that decide what the image records:
+        # From here on, the steps of the locked mflux's ZImage.generate_image that decide what the image records:
         # the same guidance and scheduler resolution, a real Config, and the real ImageUtil.to_image with the
         # same keywords. Only the pixels (a blank decode) and generation_time (no tqdm loop) are made up.
         guidance = call["guidance"] if self.model_config.supports_guidance else 0.0
@@ -116,7 +106,7 @@ class FakeZImage:
             generation_parameters={
                 **({"float32": True} if self.float32 else {}),
                 **self.compute_precision.generation_parameters(),
-                **(VAEDecodeOptions.generation_parameters(self) if VAEDecodeOptions is not None else {}),
+                **VAEDecodeOptions.generation_parameters(self),
             },
         )
         self.returned_parameters.append(image.generation_parameters)

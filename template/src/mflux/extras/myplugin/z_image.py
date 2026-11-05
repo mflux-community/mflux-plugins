@@ -6,17 +6,11 @@ from typing import Any
 
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
+from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
 from mflux.models.z_image.cli import z_image_generate
 from mflux.models.z_image.cli.z_image_generate import CONDITIONAL_OPTIONS, ZImageCommand
 
 from ._core import Adapter, run
-
-try:  # Not in the mflux 0.22.0 / 0.23.0 releases.
-    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
-except ModuleNotFoundError as exc:
-    if exc.name != "mflux.models.common.vae.vae_decode_options":
-        raise  # the module is there and broken: fail loudly, never run without its warning
-    VAEDecodeOptions = None  # the mflux 0.22.0 / 0.23.0 releases: the Z-Image decode honours --vae-tiling
 
 __all__ = [
     "ADAPTER",
@@ -82,11 +76,10 @@ def warn_ineffective_options(args: Namespace, model_config: ModelConfig) -> None
 
 
 def warn_before_load(args: Namespace, model_config: ModelConfig) -> None:
-    """mflux's pre-load warnings for Z-Image, in the order its main() gives them: first, on an mflux whose decode
-    ignores --vae-tiling, the warning about that flag, then the guidance and negative-prompt warnings. It runs after
-    the plugin's refusals, not right after parsing as in mflux's main(), so a refused run prints only the refusal."""
-    if VAEDecodeOptions is not None:
-        VAEDecodeOptions.warn_encode_only_tiling()
+    """mflux's pre-load warnings for Z-Image, in the order its main() gives them: first the warning that --vae-tiling
+    no longer changes the decode, then the guidance and negative-prompt warnings. It runs after the plugin's refusals,
+    not right after parsing as in mflux's main(), so a refused run prints only the refusal."""
+    VAEDecodeOptions.warn_encode_only_tiling()
     warn_ineffective_options(args, model_config)
 
 

@@ -11,6 +11,7 @@ import pytest
 from _fakes import FakeZImage
 from mflux.callbacks.instances.memory_saver import MemorySaver
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
+from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.utils.exceptions import ModelConfigError, StopImageGenerationException
 
 from mflux.extras.myplugin import _core, z_image
@@ -227,6 +228,64 @@ def test_a_model_config_error_becomes_exit_2(run_command, capsys) -> None:
     assert exit_info.value.code == 2
     assert "no such model" in capsys.readouterr().err
     assert FakeZImage.instances == []
+
+
+# A --model that is neither a model name, a path that exists nor the org/model shape of a Hub repo id.
+NOT_FOUND = [
+    "flux-dev",
+    "./no-such-folder",
+    "../no-such-folder",
+    "~/no-such-folder",
+    "/no/such/folder",
+    "no/such/folder",
+]
+
+
+@pytest.mark.parametrize("model", NOT_FOUND)
+def test_mflux_cannot_resolve_the_names_the_plugin_refuses(monkeypatch, tmp_path: Path, model) -> None:
+    """Bug: mflux starts to resolve one of these names (a bare repo id, say), and the refusal below turns away a model
+    that now loads. Red here means: change _refuse_unknown_model and this list."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(FileNotFoundError, match="Model not found"):
+        PathResolution.resolve(model)
+
+
+@pytest.mark.parametrize("model", NOT_FOUND)
+def test_a_model_mflux_cannot_resolve_is_refused_before_load(
+    run_command, capsys, monkeypatch, tmp_path: Path, model
+) -> None:
+    """Bug: run() leaves --model to load(), whose PathResolution raises FileNotFoundError outside run()'s try, so a
+    typo ends in an uncaught traceback (exit 1), not in a refusal."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(SystemExit) as exit_info:
+        run_command(["--prompt", "x", "--model", model])
+    assert exit_info.value.code == 2
+    assert FakeZImage.instances == []
+    assert capsys.readouterr().err.splitlines()[-1] == (
+        f"mflux-generate-z-image-myplugin: error: Model not found: {model!r}. "
+        "Give a model name this command knows, a local path that exists or a Hugging Face repo id (org/model)."
+    )
+
+
+@pytest.mark.parametrize(
+    "model", ["weights", "./weights", "~/weights", "{home}/weights", "{home}/weights/", "one.safetensors"]
+)
+def test_a_local_path_that_exists_is_not_refused(run_command, monkeypatch, tmp_path: Path, model) -> None:
+    """Bug: the check tests the shape of the name instead of the filesystem (or does not expand ~, or takes only
+    folders), so a local checkpoint mflux loads is refused."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "one.safetensors").touch()
+    model = model.format(home=tmp_path)
+    run_command([*BASE, "--seed", "1", "--model", model])
+    assert FakeZImage.instances[0].init_kwargs["model_path"] == model
+
+
+def test_a_repo_id_that_is_not_on_this_machine_is_not_refused(run_command) -> None:
+    """Bug: the check asks only whether the name exists on disk, so every Hub repo id, which mflux downloads, is
+    refused."""
+    run_command([*BASE, "--seed", "1", "--model", "someorg/not-downloaded"])
+    assert FakeZImage.instances[0].init_kwargs["model_path"] == "someorg/not-downloaded"
 
 
 def test_a_failure_after_load_exits_1_with_the_traceback(run_command, capsys, tmp_path: Path) -> None:

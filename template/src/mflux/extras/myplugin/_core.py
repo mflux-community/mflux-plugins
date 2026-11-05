@@ -4,6 +4,7 @@ Each model family has a small adapter module (z_image.py) that names mflux's own
 parses with mflux's parser, refuses what the plugin can't run before any weights load, loads with mflux,
 attaches the plugin to the loaded model, then generates and saves the way the plain mflux command does."""
 
+import os
 import sys
 import traceback
 from argparse import Namespace
@@ -14,6 +15,7 @@ from typing import Any
 from mflux.callbacks.callback_manager import CallbackManager
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
+from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.utils.exceptions import ModelConfigError, PromptFileReadError, StopImageGenerationException
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.prompt_util import PromptUtil
@@ -49,6 +51,19 @@ class Adapter:
     after_generate: Callable[[GeneratedImage, Namespace, Any, Any], None] | None = None
 
 
+def _refuse_unknown_model(parser: CommandLineParser, args: Namespace) -> None:
+    """mflux's validate gives any --model outside its registry the default entry; its PathResolution then raises
+    FileNotFoundError inside load() on a name that is no path that exists and not org/model in shape. Refuse those
+    names here. An org/model name is left to load(): only a download can tell whether that repo exists."""
+    model_path = getattr(args, "model_path", None)
+    if model_path is None or PathResolution._is_hf_format(model_path) or os.path.exists(os.path.expanduser(model_path)):
+        return
+    parser.error(
+        f"Model not found: {model_path!r}. "
+        "Give a model name this command knows, a local path that exists or a Hugging Face repo id (org/model)."
+    )
+
+
 def run(adapter: Adapter) -> None:
     parser = adapter.build_parser()
     args = parser.parse_args()
@@ -56,6 +71,7 @@ def run(adapter: Adapter) -> None:
         model_config = adapter.validate(args)
     except ModelConfigError as exc:
         parser.error(str(exc))
+    _refuse_unknown_model(parser, args)
     # The plugin's refusals come before mflux's option warnings: a refused run prints one message.
     if adapter.refuse is not None:
         adapter.refuse(parser, args, model_config)
