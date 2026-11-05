@@ -233,7 +233,7 @@ def check_folder(root: Path, folder: Path) -> list[str]:
         # Each mflux requirement (one per Python version, say) needs its own floor and may not cap.
         has_mflux = True
         if not any(operator in FLOOR_OPERATORS for operator in operators):
-            problem(f'the mflux requirement {requirement!r} needs a lower bound, for example "mflux>=0.22"')
+            problem(f'the mflux requirement {requirement!r} needs a lower bound, for example "mflux>=0.24"')
         capped = [operator for operator in operators if operator in CAPPING_OPERATORS]
         if capped:
             problem(f"the mflux requirement {requirement!r} must have no upper bound or pin, found {' '.join(capped)}")

@@ -13,7 +13,7 @@ module-name = "mflux.extras.teacache"
 
 [project]
 name = "mflux-teacache"
-version = "0.2.0"
+version = "0.3.0"
 description = "TeaCache step skipping for mflux's command line, powered by mlx-teacache."
 readme = "README.md"
 license = "Apache-2.0"
@@ -31,9 +31,10 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
-    # The mflux upper bound comes from mlx-teacache's [mflux] extra (below 0.26 in 0.14.0). This package adds no
-    # mflux upper bound. 0.14.0 records mflux up to 0.23 as checked, so on mflux 0.24 it warns and still applies.
-    "mlx-teacache[mflux]>=0.14.0",
+    # A floor only. mlx-teacache 0.16.0 requires mlx>=0.31 and, through its [mflux] extra, mflux>=0.24, so no mflux
+    # upper bound comes from it and this package adds none. 0.16.0 records mflux 0.24.0 as its newest verified
+    # release; on a newer mflux it warns and still applies.
+    "mlx-teacache[mflux]>=0.16.0",
     # A floor only: 0.24 is the first mflux that imports with pillow 13 (mflux PR 890); every earlier release
     # imports PIL._typing, which pillow 13 removed.
     "mflux>=0.24",
@@ -95,7 +96,9 @@ addopts = "-ra --strict-markers"
 filterwarnings = [
     "error",
     # A newer mflux than mlx-teacache has verified only warns for users, so it only warns here too. Reviewed for
-    # mflux 0.24.0 with mlx-teacache 0.14.0 (verified up to mflux 0.23.0); tests/test_real_teacache.py asserts this
-    # warning on that pair and skips on any other, so a new locked pair means reviewing this entry again.
+    # mflux 0.24.0 with mlx-teacache 0.16.0 (verified up to mflux 0.24.0): the warning does not fire on that pair.
+    # This entry is for the mflux-main job and for any mflux newer than the library has verified; that job went red
+    # on this warning on 2026-10-27 and 2026-10-28, before the entry existed. A new locked pair means reviewing this
+    # entry again.
     "default::mlx_teacache.errors.TeaCacheUntestedMfluxWarning",
 ]

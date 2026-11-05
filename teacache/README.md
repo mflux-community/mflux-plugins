@@ -62,10 +62,13 @@ exit code 2 and a message that points to the plain mflux command. That happens f
 
 - a model TeaCache doesn't support on this command, such as `--model z-image-turbo` (the message lists the
   supported models);
+- a `--model` name mflux can't resolve, such as `flux-dev`: it is no existing path and not in `org/model` shape (the
+  message lists the supported names). A local path that exists and any `org/model` name still run; a repo that
+  doesn't exist is only found at the download;
 - a distilled few-step model, where there is nothing to skip;
 - a threshold outside 0 to 1;
-- mflux's step cache. This command has no step-cache option; a later command for a model that has one refuses it,
-  also when `-C` restores it;
+- mflux's step cache. Neither command has a step-cache option. A command added later for a model that does have one
+  would refuse it, also when `-C` restores it;
 - too few steps. The first and last steps always run. 2 or fewer active steps are refused. With 3, the run is accepted
   but skips nothing, and TeaCache prints a warning saying so. An image-to-image run counts only the steps it actually
   runs, so a high strength in `--image PATH STRENGTH` can leave too few (strength 1.0 leaves none).
@@ -96,10 +99,10 @@ prompt and one seed; the
 [Qwen-Image-2512 page](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/qwen-image-2512.md) in the
 mlx-teacache repository has the full sweep.
 
-The command was also run on real weights with mflux 0.24.0, on a 32 GB M1 Max: 512×512, 20 steps, mflux's default
-guidance (no `--guidance`), `-q 4`, the default threshold. TeaCache skipped 7 of 20 steps, and the image scored an SSIM
-of 0.964 against plain `mflux-generate-qwen` with the same flags (SSIM compares two images; 1.0 means identical).
-These are the two commands:
+The command was also run on real weights with mflux 0.24.0 and mlx-teacache 0.14.0, on a 32 GB M1 Max: 512×512,
+20 steps, mflux's default guidance (no `--guidance`), `-q 4`, the default threshold. TeaCache skipped 7 of 20 steps,
+and the image scored an SSIM of 0.964 against plain `mflux-generate-qwen` with the same flags (SSIM compares two
+images; 1.0 means identical). These are the two commands:
 
 ```bash
 mflux-generate-qwen-teacache --prompt "a red apple on a wooden table" --steps 20 --width 512 --height 512 -q 4 --seed 42
@@ -193,7 +196,8 @@ The settings were fitted on mflux's float32 hidden stream. mflux 0.24 runs Z-Ima
 bfloat16 stream, a run of the same recipe on mflux's main branch after the 0.21.0 release skipped 12 of 48 active steps
 instead of 15, at an SSIM of 0.990 against plain mflux (SSIM scores image similarity; 1.0 means identical), according
 to the [Z-Image page](https://github.com/IonDen/mlx-teacache/blob/main/docs/variants/z-image-base.md) in the
-mlx-teacache repository. That run was not repeated on mflux 0.24. Add `--float32` to run on the stream the settings were fitted on.
+mlx-teacache repository. That run was not repeated on mflux 0.24. Add `--float32` to run on the stream the settings
+were fitted on.
 
 Other guidance values, step counts, sizes, LoRAs and precisions all run. How many steps TeaCache skips there, and
 how close the image stays to a plain mflux run, has not been measured. The command doesn't warn about these, apart
@@ -209,7 +213,10 @@ shell completions list only mflux's own commands.
 
 Each image records what TeaCache did, next to mflux's usual metadata: `teacache_threshold`,
 `teacache_skipped_steps`, `teacache_active_steps`, `teacache_variant`, `teacache_version` (the mlx-teacache
-version) and `teacache_plugin_version` (the mflux-teacache version). Replaying a TeaCache image with plain mflux and
+version), `teacache_plugin_version` (the mflux-teacache version), `teacache_decision_rule_revision` (the revision of
+mlx-teacache's skip rule) and `teacache_mflux_version` (the mflux version). The last key is left out when mflux's
+package metadata is missing, as in a source checkout on the path; mflux's own `mflux_version` key can still be there
+in that case. Replaying a TeaCache image with plain mflux and
 `-C` produces the plain run, without TeaCache. Replaying it with this command uses the model's default threshold
 unless you pass `--teacache-threshold` again, because the `teacache_*` keys are not read back.
 
@@ -224,16 +231,17 @@ For measured speedups and image comparisons, see the
 ## Versions
 
 - Python 3.11 or newer, on Apple Silicon.
-- mflux 0.24 or newer. It is the first mflux that imports with Pillow 13, which a fresh install picks. The upper limit
-  comes from mlx-teacache: its `[mflux]` extra allows mflux below 0.26. A newer mflux needs a newer mlx-teacache
-  first; until then the installer keeps or picks an older mflux. On Python 3.10 the installer keeps version 0.1.2 of
-  this package. On mflux 0.23, installing or upgrading to this release also upgrades mflux to 0.24; to stay on 0.1.2,
-  pin `mflux-teacache==0.1.2`.
-- mlx-teacache 0.14.0 or newer, which lists mflux 0.22 and 0.23 as checked. It has not been checked on mflux 0.24: there
-  either command runs and prints a warning that the installed mflux is newer than the checked ones. The plugin's
-  offline tests (fakes and a tiny random transformer, for both models) show TeaCache still applying there. The
-  Qwen-Image command was also run on real weights on mflux 0.24.0 (see the Qwen-Image section); the Z-Image command
-  has only the offline tests. This package adds no upper limit of its own.
+- mflux 0.24 or newer, with no upper limit. 0.24 is the first mflux that imports with Pillow 13, which a fresh
+  install picks. On Python 3.10 the installer keeps version 0.1.2 of this package. On mflux 0.23, installing or
+  upgrading to this release also upgrades mflux to 0.24; to stay on 0.1.2, pin `mflux-teacache==0.1.2`.
+- mlx-teacache 0.16.0 or newer. Its `[mflux]` extra is `mflux>=0.24`, and it lists mflux 0.24.0 as its newest checked
+  release, so on 0.24.0 there is no warning. On a newer mflux either command runs and prints a warning that the
+  installed mflux is newer than the checked one, and TeaCache still applies. Under `python -W error`, that warning
+  becomes an error.
+
+What was run: the offline tests (fakes and a tiny random transformer, for both models) cover mflux 0.24.0 with
+mlx-teacache 0.16.0. The Qwen-Image run on real weights on mflux 0.24.0 was measured with mlx-teacache 0.14.0 and has
+not been repeated on 0.16.0. The Z-Image command has only the offline tests on mflux 0.24.
 
 mflux's other options, `--float32` included, pass through unchanged.
 

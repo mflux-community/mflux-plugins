@@ -4,6 +4,7 @@ command relies on and FakeTeaCache cannot show."""
 import gc
 import importlib.metadata
 import json
+import warnings
 import weakref
 from collections.abc import Iterator
 from pathlib import Path
@@ -20,7 +21,8 @@ from mflux.models.common.config.model_config import AVAILABLE_MODELS
 from mflux.models.qwen.cli import qwen_image_generate
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer_block import QwenTransformerBlock
 from mflux.models.z_image.cli import z_image_generate
-from mlx_teacache import TeaCacheUncalibratedCheckpointWarning
+from mlx_teacache import TeaCacheUncalibratedCheckpointWarning, TeaCacheUntestedMfluxWarning, _mflux_versions
+from mlx_teacache.testing import reset_untested_mflux_warning
 
 from mflux.extras.teacache import _core, qwen_image
 
@@ -93,7 +95,7 @@ def test_the_skipped_steps_the_real_library_decides_are_the_ones_the_image_recor
     """Bug: the record counts a label the real gate never writes for a skipped step, so every image says it skipped
     0 steps. Caller coefficients are not clamped to a calibrated range: a polynomial that predicts almost no change
     keeps the accumulator under the threshold, so the real gate skips most steps between the forced first and last
-    (forced, computed, skipped, skipped, skipped, forced on mlx-teacache 0.14.0)."""
+    (forced, computed, skipped, skipped, skipped, forced on mlx-teacache 0.16.0)."""
     _, handle, recorded = _run_with_the_real_library(
         run_command, monkeypatch, tmp_path, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4)
     )
@@ -117,25 +119,56 @@ def test_the_real_lifecycle_callback_runs_before_mflux_memory_saver(run_command,
     assert teacache_positions[0] < saver_positions[0]
 
 
-def test_the_real_library_warns_that_the_locked_mflux_is_newer_than_it_verified(
+@pytest.fixture
+def rearmed_untested_mflux_warning() -> Iterator[None]:
+    """The library warns once per process, and an earlier real-library test has usually used that up."""
+    reset_untested_mflux_warning()
+    yield
+    reset_untested_mflux_warning()
+
+
+# The pair the lock holds, reviewed together: mlx-teacache 0.16.0 verified mflux up to 0.24.0.
+REVIEWED_PAIR = ("0.24.0", "0.16.0")
+
+
+@pytest.mark.usefixtures("rearmed_untested_mflux_warning")
+def test_the_reviewed_pair_runs_without_the_untested_mflux_warning(run_command, monkeypatch, tmp_path: Path) -> None:
+    """Bug: the lock pairs an mflux newer than this mlx-teacache verified, or the library starts warning on the mflux
+    it says it verified, so every run of the published pair tells the user it is unchecked. Only the reviewed pair can
+    say this (the mflux-main and mlx-teacache-main jobs and the wheel test run other pairs), so any other pair skips."""
+    installed = (importlib.metadata.version("mflux"), importlib.metadata.version("mlx-teacache"))
+    if installed != REVIEWED_PAIR:
+        pytest.skip(f"checks the reviewed pair {REVIEWED_PAIR} (mflux, mlx-teacache); this run has {installed}")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        _run_with_the_real_library(run_command, monkeypatch, tmp_path)
+    assert [str(w.message) for w in caught if issubclass(w.category, TeaCacheUntestedMfluxWarning)] == []
+    assert (tmp_path / "out.png").is_file()
+
+
+@pytest.mark.usefixtures("rearmed_untested_mflux_warning")
+def test_a_newer_mflux_than_the_library_verified_warns_and_still_saves(
     run_command, monkeypatch, tmp_path: Path
 ) -> None:
-    """Bug: the command swallows or filters mlx-teacache's untested-mflux warning (or the library stops giving it),
-    so a user on mflux 0.24.0 never learns that mlx-teacache 0.14.0 was verified only up to mflux 0.23.0. The
-    pyproject filter that shows this warning instead of raising it was reviewed for this pair only, so any other
-    pair skips here (the mflux-main and mlx-teacache-main jobs run other pairs)."""
-    mflux_version = importlib.metadata.version("mflux")
-    teacache_version = importlib.metadata.version("mlx-teacache")
-    if (mflux_version, teacache_version) != ("0.24.0", "0.14.0"):
-        pytest.skip(
-            f"checks the reviewed pair mflux 0.24.0 with mlx-teacache 0.14.0; this run has mflux {mflux_version} "
-            f"with mlx-teacache {teacache_version}"
-        )
-    # The library warns once per process; an earlier real-library test has usually used that up.
-    monkeypatch.setattr(mlx_teacache._mflux_versions, "_warned", False)
-    with pytest.warns(mlx_teacache.errors.TeaCacheUntestedMfluxWarning, match=r"mflux 0\.24\.0 is newer"):
-        _run_with_the_real_library(run_command, monkeypatch, tmp_path)
+    """Bug: the command swallows or filters mlx-teacache's untested-mflux warning, turns it into a refusal, or records
+    the version from anywhere but the handle, so a user on a newer mflux never learns it is unchecked, or gets no image.
+
+    installed_mflux_version is private to the library, and the one place apply_teacache reads the version from both for
+    the warning and for handle.mflux_version; nothing public can make it see another mflux."""
+    monkeypatch.setattr(_mflux_versions, "installed_mflux_version", lambda: "99.0.0")
+    with pytest.warns(TeaCacheUntestedMfluxWarning):
+        _, _, recorded = _run_with_the_real_library(run_command, monkeypatch, tmp_path)
     assert (tmp_path / "out.png").is_file()
+    assert recorded["teacache_mflux_version"] == "99.0.0"
+
+
+def test_the_real_handle_fills_both_keys_in_the_z_image_sidecar(run_command, monkeypatch, tmp_path: Path) -> None:
+    """Bug: the plugin reads a handle attribute the real library does not set the way the fake does, so the fake's tests
+    pass while the real Z-Image command leaves the keys out or records the handle's placeholder."""
+    _, handle, recorded = _run_with_the_real_library(run_command, monkeypatch, tmp_path)
+    assert recorded["teacache_decision_rule_revision"] == handle.decision_rule_revision
+    assert handle.decision_rule_revision >= 1
+    assert recorded["teacache_mflux_version"] == importlib.metadata.version("mflux")
 
 
 # Qwen-Image: the real library proxies model.transformer and runs both CFG branches through it.
@@ -191,7 +224,7 @@ def test_qwen_real_apply_commits_what_the_command_records(run_command, monkeypat
     before the wrapped generate_image commits them, the library records one decision per transformer call (two per
     step), or the image records another variant or threshold than the one the library ran.
 
-    Expected decisions, from mlx-teacache 0.14.0's gate and qwen-image-2512's calibration: step 0 is forced (and only
+    Expected decisions, from mlx-teacache 0.16.0's gate and qwen-image-2512's calibration: step 0 is forced (and only
     anchors the signal; a forced step caches nothing), step 1 has no cached residual yet so it computes and seeds,
     step 5 is forced. Steps 2 to 4 price the measured change after clamping it into the calibrated range (0.081,
     0.471): even at the range floor a step costs 0.038, and a single step reaches the 0.25 default only from a delta
@@ -207,6 +240,17 @@ def test_qwen_real_apply_commits_what_the_command_records(run_command, monkeypat
     assert recorded["teacache_skipped_steps"] == 3
     assert recorded["teacache_threshold"] == 0.25
     assert recorded["teacache_variant"] == "qwen-image-2512"
+
+
+def test_the_real_handle_fills_both_keys_in_the_qwen_sidecar(run_command, monkeypatch, tmp_path: Path) -> None:
+    """Bug: the Qwen variant's handle does not carry the revision or the mflux version the way the Z-Image one does (the
+    library records them after the variant's apply), so the real Qwen command leaves the keys out or records a
+    placeholder."""
+    _, handle, out = _run_qwen_with_the_real_library(run_command, monkeypatch, tmp_path, [*QWEN_ARGV, "--make-conf"])
+    recorded = json.loads(out.with_suffix(".metadata.json").read_text())
+    assert recorded["teacache_decision_rule_revision"] == handle.decision_rule_revision
+    assert handle.decision_rule_revision >= 1
+    assert recorded["teacache_mflux_version"] == importlib.metadata.version("mflux")
 
 
 def test_both_branches_share_one_decision_and_skip_together(run_command, monkeypatch, tmp_path: Path) -> None:
@@ -304,6 +348,7 @@ def test_real_library_warns_once_for_an_unknown_qwen_checkpoint(run_command, mon
     """Bug: for a local folder the plugin warns and the real library warns again (or neither does), so the user gets
     two warnings for one unverified checkpoint, or none, or one that does not name the checkpoint the settings were
     tuned on."""
+    (tmp_path / "weights").mkdir()  # the test's own directory is the working directory
     with pytest.warns(TeaCacheUncalibratedCheckpointWarning) as caught:
         _run_qwen_with_the_real_library(run_command, monkeypatch, tmp_path, [*QWEN_ARGV, "--model", "./weights"])
     messages = [str(w.message) for w in caught if issubclass(w.category, TeaCacheUncalibratedCheckpointWarning)]

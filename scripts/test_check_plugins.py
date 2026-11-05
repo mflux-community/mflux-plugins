@@ -316,7 +316,7 @@ def test_an_mflux_requirement_without_a_floor_is_refused(tmp_path: Path, depende
     make_repo(tmp_path, "demo", dependencies=dependencies)
     requirement = dependencies[2:-2]
     assert only_problem(tmp_path) == (
-        f'demo: the mflux requirement {requirement!r} needs a lower bound, for example "mflux>=0.22"'
+        f'demo: the mflux requirement {requirement!r} needs a lower bound, for example "mflux>=0.24"'
     )
 
 
@@ -329,7 +329,7 @@ def test_an_mflux_requirement_without_a_floor_is_refused(tmp_path: Path, depende
         ),
         (
             '["mflux!=0.22.1; python_version<\'3.11\'", "mflux>=0.22"]',
-            '"mflux!=0.22.1; python_version<\'3.11\'" needs a lower bound, for example "mflux>=0.22"',
+            '"mflux!=0.22.1; python_version<\'3.11\'" needs a lower bound, for example "mflux>=0.24"',
         ),
     ],
     ids=["cap-in-the-first", "no-floor-in-the-first"],

@@ -70,7 +70,7 @@ mflux …" comment, carry the same fix into the new folder, and say so. The `tem
 ## Adding a command
 
 First check that the mflux command has steps (`docs/writing-a-plugin.md` "Which mflux commands can host a
-plugin"); without them it can't host a plugin yet, so stop and say so. No plugin has two commands yet, the template's
+plugin"); without them it can't host a plugin yet, so stop and say so. `teacache/` has two commands, but the template's
 tests are written for one, and a worked guide for a second command does not exist yet. Don't invent how each file
 grows: change every touch point in `command-touch-points.md`, ask where the shape is unclear, then run the
 checks under "New plugin" with the same rule for red results.

@@ -5,6 +5,7 @@ run() parses with mflux's parser, refuses anything TeaCache can't run before any
 loads with mflux, applies TeaCache, and generates, records and saves the way the plain mflux command
 does."""
 
+import os
 import sys
 import traceback
 import warnings
@@ -17,6 +18,7 @@ from mflux.callbacks.callback_manager import CallbackManager
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import AVAILABLE_MODELS, ModelConfig
+from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.utils.exceptions import ModelConfigError, PromptFileReadError, StopImageGenerationException
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.prompt_util import PromptUtil
@@ -103,12 +105,13 @@ def default_active_steps(args: Namespace, model_config: ModelConfig) -> int:
 
 
 def supported_model_names(adapter: Adapter) -> tuple[str, ...]:
-    """The --model names this command can run under TeaCache, from mlx-teacache's own registry."""
+    """The --model names this command can run under TeaCache: every mflux alias of a family entry mlx-teacache's own
+    registry accepts. A variant's model_names can be fewer (Qwen-Image-2512's are two of its four aliases)."""
     names: list[str] = []
     for key in adapter.family_keys:
-        variant = match_variant(AVAILABLE_MODELS[key], adapter.pipeline)
-        if variant is not None:
-            names.extend(name for name in variant.model_names if name not in names)
+        config = AVAILABLE_MODELS[key]
+        if match_variant(config, adapter.pipeline) is not None:
+            names.extend(name for name in config.aliases if name not in names)
     return tuple(names)
 
 
@@ -120,14 +123,19 @@ def teacache_metadata(handle: TeaCacheHandle, committed_before: int) -> dict[str
     last = stats.last_generation
     if stats.generations <= committed_before or last is None:
         return None
-    return {
+    record: dict[str, float | int | str] = {
         "teacache_threshold": float(handle.rel_l1_thresh),
         "teacache_skipped_steps": sum(1 for step in last.decisions if step.decision == "skipped"),
         "teacache_active_steps": int(last.num_steps),
         "teacache_variant": str(getattr(handle, "variant_id", "unknown")),
         "teacache_version": str(mlx_teacache_version),
+        "teacache_decision_rule_revision": int(handle.decision_rule_revision),
         "teacache_plugin_version": str(plugin_version),
     }
+    # None when mflux's package metadata is missing (a source tree on the path, say).
+    if handle.mflux_version is not None:
+        record["teacache_mflux_version"] = str(handle.mflux_version)
+    return record
 
 
 def _record_teacache(image: GeneratedImage, handle: TeaCacheHandle, committed_before: int) -> None:
@@ -151,6 +159,20 @@ def _checked_threshold(parser: CommandLineParser, adapter: Adapter, value: float
             f"Run {adapter.plain_command} to generate without TeaCache."
         )
     return value
+
+
+def _refuse_unknown_model(parser: CommandLineParser, adapter: Adapter, args: Namespace) -> None:
+    """mflux's validate gives any --model outside its registry the default entry; its PathResolution then raises
+    FileNotFoundError inside load() on a name that is no path that exists and not org/model in shape. Refuse those
+    names here. An org/model name is left to load(): only a download can tell whether that repo exists."""
+    model_path = getattr(args, "model_path", None)
+    if model_path is None or PathResolution._is_hf_format(model_path) or os.path.exists(os.path.expanduser(model_path)):
+        return
+    names = ", ".join(supported_model_names(adapter)) or "none"
+    parser.error(
+        f"Model not found: {model_path!r}. Supported on this command: {names}. "
+        "For other weights, give a local path that exists or a Hugging Face repo id (org/model)."
+    )
 
 
 def _refuse_what_teacache_cannot_run(
@@ -241,6 +263,7 @@ def run(adapter: Adapter) -> None:
         model_config = adapter.validate(args)
     except ModelConfigError as exc:
         parser.error(str(exc))
+    _refuse_unknown_model(parser, adapter, args)
     # TeaCache's refusals come before mflux's option warnings: a refused run prints one message.
     variant = _refuse_what_teacache_cannot_run(parser, adapter, args, model_config)
     if adapter.after_checks is not None:
