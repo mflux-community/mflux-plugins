@@ -3,11 +3,11 @@ Metal) and mlx_teacache.apply_teacache (it rewires a real transformer). Every ca
 the real signature, so a keyword the real code doesn't take fails the test. Modelled on mflux's
 tests/cli/helpers/command_fakes.py.
 
-FakeTeaCache builds a real TeaCacheHandle and TeaCacheStats through mlx-teacache internals that are
-not public API (mlx_teacache.handle.VariantPatch, the TeaCacheHandle constructor,
-TeaCacheStats.record / finalize_last_generation). An mlx-teacache release can change them; then fix
-this fake, not the plugin (AGENTS.md says the same)."""
+FakeTeaCache builds its handle with mlx_teacache.testing.fake_handle, and commits a generation through
+TeaCacheStats.record and finalize_last_generation, the methods of the public stats type the library's own
+lifecycle uses."""
 
+import importlib.metadata
 import inspect
 import warnings
 import weakref
@@ -19,6 +19,8 @@ import mlx_teacache
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.models.common.compute_precision.compute_precision import ComputePrecision
 from mflux.models.common.config.config import Config
+from mflux.models.common.vae.block_decoder import VAEBlockDecoder
+from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
 from mflux.models.qwen.latent_creator.qwen_latent_creator import QwenLatentCreator
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer import QwenTransformer
 from mflux.models.qwen.variants.txt2img.qwen_image import QwenImage
@@ -28,37 +30,25 @@ from mflux.models.z_image.variants.z_image import ZImage
 from mflux.utils.exceptions import StopImageGenerationException
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.image_util import ImageUtil
-from mlx_teacache import Provenance, StepDecision, TeaCacheHandle, TeaCacheStats
-from mlx_teacache.handle import VariantPatch
-
-try:  # Not in the mflux 0.22.0 / 0.23.0 releases.
-    from mflux.models.common.vae.block_decoder import VAEBlockDecoder
-    from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
-except ModuleNotFoundError as exc:
-    if exc.name not in ("mflux.models.common.vae.block_decoder", "mflux.models.common.vae.vae_decode_options"):
-        raise
-    VAEBlockDecoder = None  # the mflux 0.22.0 / 0.23.0 releases: one Z-Image decode, nothing to record about it
-    VAEDecodeOptions = None
+from mlx_teacache import StepDecision, TeaCacheHandle
+from mlx_teacache.testing import fake_handle
 
 
 class FakeVAE:
-    """Stands in for ZImage.vae, which only the decode reads. On an mflux with VAEDecodeOptions it carries the decode
-    mode ZImageInitializer sets (row strips) for VAEDecodeOptions.apply to switch; the mflux 0.22.0 /
-    0.23.0 releases have no decode mode."""
+    """Stands in for ZImage.vae, which only the decode reads. It carries the decode mode ZImageInitializer sets (row
+    strips) for VAEDecodeOptions.apply to switch."""
 
     def __init__(self) -> None:
-        if VAEBlockDecoder is not None:
-            self.decode_mode = VAEBlockDecoder.LOW_MEMORY
+        self.decode_mode = VAEBlockDecoder.LOW_MEMORY
 
 
 class FakeZImage:
     """Stands in for ZImage. Construction is what ZImageCommand.load() does, so an empty
-    `instances` means no weights were loaded. generate_image builds its GeneratedImage the way mflux
-    0.22's ZImage.generate_image does (guidance forced to 0.0 on a model without guidance, the scheduler
+    `instances` means no weights were loaded. generate_image builds its GeneratedImage the way the locked
+    mflux's ZImage.generate_image does (guidance forced to 0.0 on a model without guidance, the scheduler
     default resolved, a real Config, the real ImageUtil.to_image with the same keywords), so a save
     writes a real PNG and a real JSON sidecar with the fields mflux writes: steps, guidance, image_path,
-    image_strength, pid_*, and float32 / compute_precision (and, on an mflux that records it, vae_full_precision)
-    in generation_parameters.
+    image_strength, pid_*, and float32 / compute_precision / vae_full_precision in generation_parameters.
 
     Two fields are simpler than the real ones, safe because no test here passes --lora or reads them
     back: lora_paths / lora_scales are the values passed to __init__ (the real LoRALoader resolves
@@ -98,7 +88,7 @@ class FakeZImage:
         if failure is not None:
             raise failure
         call = bound.arguments
-        # From here on, the steps of mflux 0.22's ZImage.generate_image that decide what the image records:
+        # From here on, the steps of the locked mflux's ZImage.generate_image that decide what the image records:
         # the same guidance and scheduler resolution, a real Config, and the real ImageUtil.to_image with the
         # same keywords. Only the pixels (a blank decode) and generation_time (no tqdm loop) are made up.
         guidance = call["guidance"] if self.model_config.supports_guidance else 0.0
@@ -133,7 +123,7 @@ class FakeZImage:
             generation_parameters={
                 **({"float32": True} if self.float32 else {}),
                 **self.compute_precision.generation_parameters(),
-                **(VAEDecodeOptions.generation_parameters(self) if VAEDecodeOptions is not None else {}),
+                **VAEDecodeOptions.generation_parameters(self),
             },
         )
         self.returned_parameters.append(image.generation_parameters)
@@ -144,7 +134,7 @@ class FakeZImage:
 
 
 class LoopingFakeZImage(FakeZImage):
-    """A FakeZImage that runs mflux 0.22's denoising loop for real: the callback context (start, before_loop,
+    """A FakeZImage that runs mflux's denoising loop for real: the callback context (start, before_loop,
     in_loop, after_loop), self._predict(self.transformer), the scheduler steps. The transformer is a tiny real
     ZImageTransformer with random, never-loaded weights, so the real mlx_teacache.apply_teacache can patch this
     model, gate every step and commit its stats. The prompt encoding is a fixed random array (no text encoder)."""
@@ -336,18 +326,6 @@ class LifecycleMarker:
         pass
 
 
-def new_handle(*, rel_l1_thresh: float, variant_id: str) -> TeaCacheHandle:
-    """A real TeaCacheHandle around a real TeaCacheStats with nothing patched, as FakeTeaCache returns it."""
-    handle = TeaCacheHandle(
-        patch=VariantPatch(),
-        stats=TeaCacheStats(),
-        provenance=Provenance(source="builtin"),
-        rel_l1_thresh=rel_l1_thresh,
-    )
-    handle.variant_id = variant_id  # type: ignore[attr-defined]
-    return handle
-
-
 def commit_generation(
     handle: TeaCacheHandle,
     *,
@@ -355,7 +333,7 @@ def commit_generation(
     skipped_steps: frozenset[int],
     numerical_miss_step: int | None = None,
 ) -> None:
-    """Records and commits one generation the way mlx-teacache 0.14.0's gate decides it: the first and the last
+    """Records and commits one generation the way mlx-teacache 0.16.0's gate decides it: the first and the last
     active step are always "forced" (skip_first_n_steps = skip_last_n_steps = 1, _kernel/gate.py), so a
     skipped_steps entry there is ignored; then the one numerical miss, the skipped steps, "computed" for the rest."""
     for step in range(active_steps):
@@ -379,7 +357,8 @@ class FakeTeaCache:
     generate_image returns normally. Like the library's lifecycle it records ACTIVE steps (an
     image-to-image run starts at mflux's own init_time_step), with the decisions commit_generation
     describes, and it resolves the default threshold and the variant id from the real
-    mlx_teacache.match_variant."""
+    mlx_teacache.match_variant. Its handle records the library's current decision-rule revision and the installed
+    mflux, as a real one does, unless a test sets decision_rule_revision or mflux_version (None: no package metadata)."""
 
     real_signature = inspect.signature(mlx_teacache.apply_teacache)
 
@@ -391,12 +370,16 @@ class FakeTeaCache:
         uncommitted_seeds: frozenset[int] = frozenset(),
         warning: Warning | None = None,
         error: Exception | None = None,
+        decision_rule_revision: int | None = None,
+        mflux_version: str | None = importlib.metadata.version("mflux"),
     ) -> None:
         self.skipped_steps = skipped_steps
         self.numerical_miss_step = numerical_miss_step
         self.uncommitted_seeds = uncommitted_seeds
         self.warning = warning
         self.error = error
+        self.decision_rule_revision = decision_rule_revision
+        self.mflux_version = mflux_version
         self.calls: list[dict[str, Any]] = []
 
     def __call__(self, flux: Any, **kwargs: Any) -> TeaCacheHandle:
@@ -409,8 +392,11 @@ class FakeTeaCache:
         variant = mlx_teacache.match_variant(flux.model_config, type(flux).PIPELINE)
         assert variant is not None and variant.default_thresh is not None, "the plugin applied an unsupported model"
         requested = kwargs.get("rel_l1_thresh")
-        handle = new_handle(
-            rel_l1_thresh=variant.default_thresh if requested is None else requested, variant_id=variant.variant_id
+        handle = fake_handle(
+            rel_l1_thresh=variant.default_thresh if requested is None else requested,
+            variant_id=variant.variant_id,
+            decision_rule_revision=self.decision_rule_revision,
+            mflux_version=self.mflux_version,
         )
         flux.callbacks.register(LifecycleMarker())
         original = flux.generate_image
