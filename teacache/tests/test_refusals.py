@@ -19,6 +19,7 @@ from conftest import FAKES
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.compute_precision.compute_precision import ComputePrecision
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
+from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.models.z_image.cli import z_image_generate
 from mlx_teacache import TeaCacheUncalibratedCheckpointWarning, VariantInfo
 
@@ -632,9 +633,10 @@ def test_the_qwen_command_does_not_take_a_step_cache_flag(run_command, teacache,
 
 
 @pytest.mark.parametrize("model", ["./weights", "mflux-community/unknown-qwen"])
-def test_an_unknown_qwen_checkpoint_warns_once_naming_the_tuned_one(run_command, teacache, model) -> None:
+def test_an_unknown_qwen_checkpoint_warns_once_naming_the_tuned_one(run_command, teacache, tmp_path, model) -> None:
     """Bug: a local folder or another repo (which mflux runs on the Qwen-Image-2512 config, and mlx-teacache cannot
     tell apart from 2512) runs without saying the settings were tuned on Qwen/Qwen-Image-2512, or warns twice."""
+    (tmp_path / "weights").mkdir()  # the test's own directory is the working directory
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         run_command([*QWEN_RUN, "--model", model], qwen_image.ADAPTER)
@@ -679,3 +681,113 @@ def test_an_mflux_alias_of_the_tuned_model_runs_without_a_warning(run_command, t
     (built,) = FakeQwenImage.instances
     assert built.init_kwargs["model_config"] is AVAILABLE_MODELS["qwen-image"]
     assert built.init_kwargs["model_path"] is None
+
+
+# A --model that is neither a model name, a path that exists nor the org/model shape of a Hub repo id.
+NOT_FOUND = [
+    "flux-dev",
+    "./no-such-folder",
+    "../no-such-folder",
+    "~/no-such-folder",
+    "/no/such/folder",
+    "no/such/folder",
+]
+SUPPORTED_LIST = {
+    "mflux-generate-z-image-teacache": "z-image, zimage",
+    "mflux-generate-qwen-teacache": "qwen-image, qwen, qwen-image-2512, qwen-2512",
+}
+BOTH_COMMANDS = pytest.mark.parametrize("adapter", [z_image.ADAPTER, qwen_image.ADAPTER], ids=lambda a: a.command)
+
+
+def built_models(adapter: _core.Adapter) -> list:
+    return (FakeZImage if adapter is z_image.ADAPTER else FakeQwenImage).instances
+
+
+@pytest.mark.parametrize("model", NOT_FOUND)
+def test_mflux_cannot_resolve_the_names_the_plugin_refuses(monkeypatch, tmp_path, model) -> None:
+    """Bug: mflux starts to resolve one of these names (a bare repo id, say), and the refusal below turns away a model
+    that now loads. Red here means: change _refuse_unknown_model and this list."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    with pytest.raises(FileNotFoundError, match="Model not found"):
+        PathResolution.resolve(model)
+
+
+@BOTH_COMMANDS
+@pytest.mark.parametrize("model", NOT_FOUND)
+def test_a_model_mflux_cannot_resolve_is_refused_before_load(
+    run_command, teacache, capsys, monkeypatch, tmp_path, adapter, model
+) -> None:
+    """Bug: run() leaves --model to load(), whose PathResolution raises FileNotFoundError outside run()'s try, so a
+    typo ends in an uncaught traceback (exit 1) after TeaCache's checkpoint warning, not in a refusal."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    err = refused(run_command, ["--prompt", "x", "--model", model], capsys, adapter, expected="Model not found")
+    assert err.splitlines()[-1] == (
+        f"{adapter.command}: error: Model not found: {model!r}. "
+        f"Supported on this command: {SUPPORTED_LIST[adapter.command]}. "
+        "For other weights, give a local path that exists or a Hugging Face repo id (org/model)."
+    )
+
+
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+def test_a_sidecar_whose_model_path_is_gone_is_refused_before_load(run_command, teacache, capsys, tmp_path) -> None:
+    """Bug: the check reads only a --model typed on the command line, so replaying a -C sidecar from a run on a local
+    folder that has since moved ends in load()'s traceback."""
+    sidecar = tmp_path / "gone.metadata.json"
+    sidecar.write_text(
+        json.dumps({"model": "Tongyi-MAI/Z-Image", "model_path": "./gone", "prompt": "p", "seed": 3, "steps": 5})
+    )
+    refused(run_command, ["-C", str(sidecar)], capsys, expected="Model not found: './gone'.")
+
+
+@BOTH_COMMANDS
+@pytest.mark.parametrize(
+    "model", ["weights", "./weights", "~/weights", "{home}/weights", "{home}/weights/", "one.safetensors"]
+)
+def test_a_local_path_that_exists_is_not_refused(run_command, teacache, monkeypatch, tmp_path, adapter, model) -> None:
+    """Bug: the check tests the shape of the name instead of the filesystem (or does not expand ~, or takes only
+    folders), so a local checkpoint mflux loads is refused."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "one.safetensors").touch()
+    model = model.format(home=tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", TeaCacheUncalibratedCheckpointWarning)
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", model], adapter)
+    (built,) = built_models(adapter)
+    assert built.init_kwargs["model_path"] == model
+
+
+@BOTH_COMMANDS
+def test_a_repo_id_that_is_not_on_this_machine_is_not_refused(run_command, teacache, adapter) -> None:
+    """Bug: the check asks only whether the name exists on disk, so every Hub repo id, which mflux downloads, is
+    refused."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", TeaCacheUncalibratedCheckpointWarning)
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "someorg/not-downloaded"], adapter)
+    (built,) = built_models(adapter)
+    assert built.init_kwargs["model_path"] == "someorg/not-downloaded"
+
+
+def test_the_supported_names_are_every_alias_mflux_accepts() -> None:
+    """Bug: the list comes from mlx-teacache's VariantInfo.model_names, which for Qwen-Image-2512 holds two of the
+    four names mflux runs it under, so the refusal leaves out qwen-image, the default; or the list takes in
+    z-image-turbo, which this command refuses."""
+    assert _core.supported_model_names(qwen_image.ADAPTER) == ("qwen-image", "qwen", "qwen-image-2512", "qwen-2512")
+    assert _core.supported_model_names(z_image.ADAPTER) == ("z-image", "zimage")
+
+
+def test_the_qwen_unsupported_refusal_lists_all_four_aliases(run_command, teacache, capsys, monkeypatch) -> None:
+    """Bug: the "TeaCache doesn't support" refusal on the Qwen command names two of the four --model names, against
+    the README's four."""
+    real = _core.match_variant
+    answers = [None]  # run()'s own question gets None; supported_model_names then reads the real registry.
+
+    def none_once(model_config, pipeline):
+        return answers.pop() if answers else real(model_config, pipeline)
+
+    monkeypatch.setattr(_core, "match_variant", none_once)
+    err = qwen_refused(run_command, ["--prompt", "x", "--model", "qwen"], capsys, expected="TeaCache doesn't support")
+    assert err.splitlines()[-1] == (
+        "mflux-generate-qwen-teacache: error: TeaCache doesn't support qwen yet. Supported on this command: "
+        "qwen-image, qwen, qwen-image-2512, qwen-2512. Run mflux-generate-qwen to generate without TeaCache."
+    )

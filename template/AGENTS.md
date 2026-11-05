@@ -69,7 +69,11 @@ It adds only the optional hooks its command needs:
   handle from `apply` and the state from `before_generate`. Add your record to a new `generation_parameters` dict;
   don't change the one the image holds.
 
-The Z-Image adapter's `after_checks` hook (`warn_before_load`) calls mflux's tiling warning where that mflux has one,
+`run` also refuses a `--model` name that is no existing path and not `org/model` in shape (`_refuse_unknown_model`,
+exit 2), because mflux would fail on it at load with a traceback. A local path that exists and any `org/model` name
+still run.
+
+The Z-Image adapter's `after_checks` hook (`warn_before_load`) calls mflux's tiling warning,
 then `warn_ineffective_options`, which copies a block of statements from mflux's `main()`, because mflux has no
 `prepare()` step for it yet. Code copied from mflux is listed in `NOTICE`; a new adapter
 that copies more adds its file there.

@@ -9,11 +9,12 @@ from types import SimpleNamespace
 import mlx_teacache
 import PIL.Image
 import pytest
-from _fakes import FakeQwenImage, FakeZImage, commit_generation, new_handle
+from _fakes import FakeQwenImage, FakeZImage, commit_generation
 from _marks import SIDECAR_LEFT_OPEN_MESSAGE
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
 from mflux.utils.exceptions import StopImageGenerationException
 from mlx_teacache import TeaCacheUntestedMfluxWarning
+from mlx_teacache.testing import fake_handle
 
 from mflux.extras.teacache import _core, qwen_image, z_image
 
@@ -36,6 +37,8 @@ def teacache_keys(metadata: dict) -> dict:
 def test_a_committed_generation_records_teacache_in_the_sidecar(run_command, teacache, tmp_path) -> None:
     """Bug: the teacache_* keys are missing, count computed steps as skipped, or hold a value json.dump
     can't write (mflux's save_image swallows that error and writes no sidecar at all)."""
+    teacache.decision_rule_revision = 7
+    teacache.mflux_version = "9.8.7"
     out = tmp_path / "out.png"
     run_command([*BASE, "--seed", "7", "--make-conf", "--output", str(out)])
     metadata = sidecar(out)
@@ -45,6 +48,8 @@ def test_a_committed_generation_records_teacache_in_the_sidecar(run_command, tea
         "teacache_active_steps": 5,
         "teacache_variant": "z-image-base",
         "teacache_version": mlx_teacache.__version__,
+        "teacache_decision_rule_revision": 7,
+        "teacache_mflux_version": "9.8.7",
         "teacache_plugin_version": PLUGIN_VERSION,
     }
     assert metadata["seed"] == 7  # mflux's own keys are untouched
@@ -75,8 +80,70 @@ def test_the_teacache_record_keeps_the_options_mflux_recorded(run_command, teaca
         "teacache_active_steps",
         "teacache_variant",
         "teacache_version",
+        "teacache_decision_rule_revision",
+        "teacache_mflux_version",
         "teacache_plugin_version",
     }
+
+
+COMMANDS = [pytest.param(z_image.ADAPTER, id="z-image"), pytest.param(qwen_image.ADAPTER, id="qwen-image")]
+
+
+@pytest.mark.parametrize("adapter", COMMANDS)
+def test_each_command_records_the_handles_decision_rule_revision(run_command, teacache, tmp_path, adapter) -> None:
+    """Bug: teacache_decision_rule_revision is missing from the sidecar, or holds the revision of the installed library
+    (or a fixed number) instead of the handle's, so an image can't tell which decision rule skipped its steps."""
+    teacache.decision_rule_revision = 7
+    out = tmp_path / "out.png"
+    run_command([*BASE, "--seed", "7", "--make-conf", "--output", str(out)], adapter)
+    assert sidecar(out)["teacache_decision_rule_revision"] == 7
+
+
+@pytest.mark.parametrize("adapter", COMMANDS)
+def test_each_command_records_the_handles_mflux_version(run_command, teacache, tmp_path, adapter) -> None:
+    """Bug: teacache_mflux_version is missing from the sidecar, or holds the version read from elsewhere than the
+    handle (mlx-teacache's own, or the installed metadata when the handle says otherwise)."""
+    teacache.mflux_version = "9.8.7"
+    out = tmp_path / "out.png"
+    run_command([*BASE, "--seed", "7", "--make-conf", "--output", str(out)], adapter)
+    assert sidecar(out)["teacache_mflux_version"] == "9.8.7"
+
+
+@pytest.mark.parametrize("adapter", COMMANDS)
+def test_a_handle_without_an_mflux_version_leaves_the_key_out_of_the_sidecar(
+    run_command, teacache, tmp_path, adapter
+) -> None:
+    """Bug: the record writes str(handle.mflux_version) unguarded, so an mflux without package metadata leaves the
+    string "None" (or a JSON null) in every image, or the whole record is dropped instead of the one key."""
+    teacache.mflux_version = None
+    teacache.decision_rule_revision = 7
+    out = tmp_path / "out.png"
+    run_command([*BASE, "--seed", "7", "--make-conf", "--output", str(out)], adapter)
+    recorded = teacache_keys(sidecar(out))
+    assert "teacache_mflux_version" not in recorded
+    assert recorded["teacache_decision_rule_revision"] == 7
+
+
+def test_the_record_reads_both_keys_from_the_handle() -> None:
+    """Bug: teacache_metadata swaps the two keys, or returns the revision as something json.dump writes differently
+    (a string), so a reader comparing revisions as numbers finds none."""
+    handle = fake_handle(decision_rule_revision=7, mflux_version="9.8.7")
+    commit_generation(handle, active_steps=5, skipped_steps=frozenset({1, 2, 3}))
+    record = _core.teacache_metadata(handle, committed_before=0)
+    assert type(record["teacache_decision_rule_revision"]) is int
+    assert record["teacache_decision_rule_revision"] == 7
+    assert record["teacache_mflux_version"] == "9.8.7"
+
+
+def test_the_record_leaves_out_an_mflux_version_of_none() -> None:
+    """Bug: teacache_metadata stores None or "None" under teacache_mflux_version on a handle built without mflux's
+    package metadata, or drops the rest of the record with it."""
+    handle = fake_handle(decision_rule_revision=7, mflux_version=None)
+    commit_generation(handle, active_steps=5, skipped_steps=frozenset({1, 2, 3}))
+    record = _core.teacache_metadata(handle, committed_before=0)
+    assert "teacache_mflux_version" not in record
+    assert record["teacache_decision_rule_revision"] == 7
+    assert record["teacache_skipped_steps"] == 3
 
 
 def test_the_record_does_not_change_the_dict_mflux_handed_over(run_command, teacache, tmp_path) -> None:
@@ -146,7 +213,7 @@ def test_an_image_without_generation_parameters_still_gets_the_record() -> None:
     """Bug: _record_teacache spreads image.generation_parameters unguarded, so a model family whose image carries
     None there (mflux's GeneratedImage turns None into {}, a later family may not) fails with a TypeError after the
     image was generated, and the run exits 1 without saving it."""
-    handle = new_handle(rel_l1_thresh=0.12, variant_id="z-image-base")
+    handle = fake_handle(rel_l1_thresh=0.12, variant_id="z-image-base")
     commit_generation(handle, active_steps=5, skipped_steps=frozenset({1, 2, 3}))
     image = SimpleNamespace(generation_parameters=None)
     _core._record_teacache(image, handle, committed_before=0)
@@ -234,7 +301,7 @@ def test_ctrl_c_during_a_generation_propagates_as_keyboard_interrupt(run_command
 def test_a_newer_mflux_warns_and_still_runs(run_command, teacache, tmp_path) -> None:
     """Bug: the plugin turns mlx-teacache's untested-mflux warning into a refusal (or swallows it), against
     the rule that a newer mflux runs and reports rather than refusing to start."""
-    teacache.warning = TeaCacheUntestedMfluxWarning("mflux 0.24.0 is newer than the newest mflux mlx-teacache checked")
+    teacache.warning = TeaCacheUntestedMfluxWarning("mflux 99.0.0 is newer than the newest mflux mlx-teacache checked")
     with pytest.warns(TeaCacheUntestedMfluxWarning):
         run_command([*BASE, "--seed", "7", "--output", str(tmp_path / "out.png")])
     assert (tmp_path / "out.png").is_file()

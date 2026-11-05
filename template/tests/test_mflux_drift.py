@@ -5,10 +5,7 @@ Every pinned value is recorded once per mflux source it was reviewed against, un
 update: read mflux's diff of src/mflux/models/z_image/cli/z_image_generate.py, bring z_image.py (and _core.run, if
 the flow after load() changed) in line with it, then add the values the failure messages print under a new label."""
 
-import builtins
-import importlib
 import importlib.metadata
-import importlib.util
 import inspect
 import json
 import sys
@@ -29,10 +26,6 @@ from mflux.utils.generated_image import GeneratedImage
 
 import mflux
 from mflux.extras.myplugin import z_image
-
-# mflux main a3b21fc added VAEDecodeOptions (the --vae-full-precision decode, and a warning that --vae-tiling no
-# longer changes the decode); the mflux 0.22.0 / 0.23.0 releases have neither.
-HAS_DECODE_OPTIONS = importlib.util.find_spec("mflux.models.common.vae.vae_decode_options") is not None
 
 # The reviewed mflux sources. The released digests were recorded on PyPI 0.22.0 (commit 31c9640); v.0.23.0 has the
 # same z_image_generate.py, variants/z_image.py, cli/parser/parsers.py and utils/apple_silicon.py. CI checks every
@@ -284,26 +277,23 @@ def _after_checks_on(monkeypatch: pytest.MonkeyPatch, argv: list[str]) -> None:
     hook(args, ZImageCommand.validate(args))
 
 
-@pytest.mark.skipif(not HAS_DECODE_OPTIONS, reason="this mflux's Z-Image decode still tiles")
 @pytest.mark.parametrize("argv", [["--vae-tiling"], ["--vae-tile-size", "256"], ["--vae-tile-size=256"]])
-def test_vae_tiling_warns_before_load_where_the_decode_ignores_it(monkeypatch, argv) -> None:
+def test_vae_tiling_warns_before_load(monkeypatch, argv) -> None:
     """Bug: the pre-load hook leaves out the VAEDecodeOptions.warn_encode_only_tiling() call that mflux's main() makes
-    right after parsing, so on an mflux whose Z-Image decode ignores --vae-tiling the plugin runs it without the
-    warning mflux-generate-z-image prints."""
+    right after parsing, so the plugin runs --vae-tiling, which the Z-Image decode ignores, without the warning
+    mflux-generate-z-image prints."""
     with pytest.warns(UserWarning, match="change only the encode of an input image"):
         _after_checks_on(monkeypatch, argv)
 
 
-@pytest.mark.skipif(not HAS_DECODE_OPTIONS, reason="this mflux's Z-Image decode still tiles")
 def test_vae_tiling_warning_stays_off_without_a_tiling_flag(monkeypatch) -> None:
     """Bug: the plugin warns that --vae-tiling changes only the encode whether or not the flag was given (a bare
-    warnings.warn in place of mflux's warn_encode_only_tiling()), so every run on such an mflux gets a false warning."""
+    warnings.warn in place of mflux's warn_encode_only_tiling()), so every run gets a false warning."""
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         _after_checks_on(monkeypatch, [])
 
 
-@pytest.mark.skipif(not HAS_DECODE_OPTIONS, reason="this mflux's Z-Image decode still tiles")
 def test_vae_tiling_warning_comes_before_the_model_loads(run_command, tmp_path: Path) -> None:
     """Bug: the tiling warning moves behind load() (a post-load hook, or _core.run calling after_checks after load),
     so the plugin prints it after the weights load, not before as mflux-generate-z-image does."""
@@ -323,36 +313,6 @@ def test_vae_tiling_warning_comes_before_the_model_loads(run_command, tmp_path: 
     assert len(FakeZImage.instances) == 1  # the run did load the model, after the warning
 
 
-@pytest.mark.skipif(HAS_DECODE_OPTIONS, reason="this mflux's Z-Image decode ignores tiling")
-@pytest.mark.parametrize("argv", [["--vae-tiling"], ["--vae-tile-size", "256"]])
-def test_vae_tiling_stays_silent_where_the_decode_still_tiles(monkeypatch, argv) -> None:
-    """Bug: the plugin warns that --vae-tiling changes only the encode on every mflux, so on the mflux 0.22.0 and
-    0.23.0 releases, where the flag does tile the decode, it tells the user something false."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        _after_checks_on(monkeypatch, argv)
-
-
-def test_a_broken_decode_options_module_fails_the_import(monkeypatch) -> None:
-    """Bug: the guarded import in z_image.py takes any ModuleNotFoundError (or ImportError) for an mflux without
-    vae_decode_options, so where that module is there but cannot import its own dependency, the plugin runs
-    without mflux's tiling warning instead of failing."""
-    missing = "mflux.models.common.vae.block_decoder"
-    real_import = builtins.__import__
-
-    def broken_import(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name == "mflux.models.common.vae.vae_decode_options":
-            raise ModuleNotFoundError(f"No module named {missing!r}", name=missing)
-        return real_import(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", broken_import)
-    # The reload stops at the guarded import; every name z_image held before keeps its value.
-    with pytest.raises(ModuleNotFoundError) as caught:
-        importlib.reload(z_image)
-    assert caught.value.name == missing
-
-
-@pytest.mark.skipif(not HAS_DECODE_OPTIONS, reason="this mflux has no --vae-full-precision")
 @pytest.mark.parametrize(
     ("argv", "decode_mode", "recorded"), [([], "low_memory", None), (["--vae-full-precision"], "full_precision", True)]
 )

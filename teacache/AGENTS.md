@@ -60,6 +60,8 @@ tests/
 (`parser.error`, exit 2), when it finds:
 
 - a threshold outside (0, 1];
+- a `--model` name that is no existing path and not `org/model` in shape (`_refuse_unknown_model`; mflux would fail
+  on it at load with a traceback). The message lists `supported_model_names`;
 - a model that mlx-teacache's `match_variant` doesn't accept;
 - a distilled model;
 - a step-cache setting;
@@ -84,7 +86,7 @@ optional hooks its command needs:
   and so is any `-q` other than 4. The check ignores case, as the Hub and mlx-teacache do. Check
   the model card on the Hub before you add one, and never add a Turbo repo (`tests/test_refusals.py` checks that).
 
-The Z-Image adapter's one hook (`warn_before_load`) calls mflux's tiling warning where that mflux has one, then
+The Z-Image adapter's one hook (`warn_before_load`) calls mflux's tiling warning, then
 `warn_ineffective_options`, which copies a block of statements from mflux's `main()`, because mflux has no
 `prepare()` step for it yet. Code copied from mflux is listed in `NOTICE`; a new adapter that
 copies more adds its file there.
@@ -146,9 +148,10 @@ When an mflux update turns it red:
   `LoopingFakeQwenImage`, which run mflux's denoising loop over a tiny transformer with random weights they never
   load. The Qwen tests there also check that both classifier-free guidance branches follow one skip decision, and that
   `--low-ram` and `--pid-decode` release the transformer before the decode. `FakeTeaCache`
-  builds a real handle through mlx-teacache internals that are not public API (`mlx_teacache.handle.VariantPatch`,
-  the `TeaCacheHandle` constructor, `TeaCacheStats.record` and `finalize_last_generation`). If an mlx-teacache
-  release changes them, fix the fake, not the plugin.
+  builds its handle with `mlx_teacache.testing.fake_handle` and commits a generation through
+  `TeaCacheStats.record` and `finalize_last_generation`. The one private mlx-teacache name left is
+  `_mflux_versions.installed_mflux_version`, which `test_real_teacache.py` patches to simulate a newer mflux. If an
+  mlx-teacache release changes these, fix the fake, not the plugin.
 - Each test's docstring starts with `Bug:` and names the one-line bug that turns it red.
 - Warnings are errors in the test run, with one exception: mlx-teacache's `TeaCacheUntestedMfluxWarning` is shown, not
   raised (`filterwarnings` in `pyproject.toml`), so a run on an mflux newer than mlx-teacache has checked still
@@ -157,15 +160,14 @@ When an mflux update turns it red:
 
 ## Dependencies and version pins
 
-- Runtime dependencies: `mlx-teacache[mflux]>=0.14.0` and `mflux>=0.24`.
-- The mflux upper bound comes from mlx-teacache's extra: below 0.26 with mlx-teacache 0.14.0. The direct `mflux`
-  requirement is a lower bound only: 0.24 is the first mflux that imports with pillow 13 ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)).
+- Runtime dependencies: `mlx-teacache[mflux]>=0.16.0` and `mflux>=0.24`.
+- mlx-teacache's `[mflux]` extra is `mflux>=0.24` with no upper bound, so nothing limits mflux from above. The direct
+  `mflux` requirement is a lower bound only: 0.24 is the first mflux that imports with pillow 13 ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)).
   Never give an mflux requirement an upper bound here, because a newer mflux runs and warns. `tests/test_wheel.py`
   checks this.
-- mlx-teacache 0.14.0 records mflux 0.22 and 0.23 as checked, and it follows mflux 0.22's bfloat16 Z-Image
-  stream. It prints no warning on either. It has not been checked on mflux 0.24: there it issues
-  `TeaCacheUntestedMfluxWarning` and TeaCache still applies. The test run shows that warning instead of failing on it
-  (`filterwarnings` in `pyproject.toml`); the release job's wheel test installs the newest mflux.
+- mlx-teacache 0.16.0 records mflux 0.24.0 as its newest checked release. It prints no warning there. On a newer
+  mflux it issues `TeaCacheUntestedMfluxWarning` and TeaCache still applies. The test run shows that warning instead of
+  failing on it (`filterwarnings` in `pyproject.toml`); the release job's wheel test installs the newest mflux.
 - All of them come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed
   file.
 - `ruff` and `ty` are pinned exactly. After you change `pyproject.toml`, run `uv lock` and
