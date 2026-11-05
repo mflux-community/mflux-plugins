@@ -1,0 +1,93 @@
+[build-system]
+# The backend this package is built and tested with: uv 0.11.2 (CI pins it) builds with its own uv_build 0.11.2.
+requires = ["uv_build>=0.11.2,<0.12"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+default-excludes = true
+# mflux PR #776 namespace contract: this distribution ships only mflux/extras/taef/.
+# Never ship src/mflux/__init__.py (mflux core owns it) or src/mflux/extras/__init__.py
+# (mflux.extras must stay an implicit namespace package that every extras package shares).
+# The dotted module name already marks a namespace package, so no `namespace = true`.
+module-name = "mflux.extras.taef"
+
+[project]
+name = "mflux-taef"
+version = "0.1.0"
+description = "Live TAEF previews for mflux's command line, powered by mlx-taef."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
+maintainers = [{ name = "Denis Ineshin", email = "denis.ineshin@gmail.com" }]
+requires-python = ">=3.11"
+keywords = ["mflux", "mlx", "taef", "preview", "apple-silicon", "diffusion", "z-image"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    # 0.9.0 is the first whose [mflux] extra admits mflux 0.24: 0.8.4's caps Pillow below 13, which mflux 0.24 requires.
+    "mlx-taef[mflux]>=0.9.0",
+    # A floor only, never an upper bound: 0.24 is the first mflux that imports with Pillow 13.
+    "mflux>=0.24",
+]
+
+[project.urls]
+Homepage = "https://github.com/mflux-community/mflux-plugins/tree/main/taef"
+Repository = "https://github.com/mflux-community/mflux-plugins"
+Issues = "https://github.com/mflux-community/mflux-plugins/issues"
+Documentation = "https://github.com/mflux-community/mflux-plugins/tree/main/taef#readme"
+
+[project.scripts]
+mflux-generate-z-image-taef = "mflux.extras.taef.z_image:main"
+mflux-generate-z-image-turbo-taef = "mflux.extras.taef.z_image_turbo:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1,<10.0",
+    # Pinned exactly: the ruff version in .github/workflows/lint.yml (scripts/check_plugins.py checks they match).
+    "ruff==0.16.3",
+    "ty==0.0.72",
+]
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py311"
+respect-gitignore = true
+
+[tool.ruff.lint]
+select = ["BLE", "E4", "E7", "E9", "F", "I", "ICN", "LOG", "PERF", "W"]
+
+[tool.ruff.lint.per-file-ignores]
+# conftest.py sets HF_HUB_OFFLINE / HF_HOME before importing anything that reads them.
+"tests/conftest.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+case-sensitive = false
+combine-as-imports = true
+known-first-party = ["mflux.extras.taef"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.analysis]
+# ty cannot model mflux core's pkgutil.extend_path merge: core is a regular package in
+# site-packages and this distribution adds mflux/extras/taef/ from src/, so a static
+# resolver reports absolute mflux.extras.* imports as unresolved. The package uses relative
+# imports internally; tests/test_namespace.py checks the real import at runtime.
+allowed-unresolved-imports = ["mflux.extras.**"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
+filterwarnings = ["error"]
