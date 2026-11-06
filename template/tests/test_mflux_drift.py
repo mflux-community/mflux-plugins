@@ -5,11 +5,13 @@ Every pinned value is recorded once per mflux source it was reviewed against, un
 update: read mflux's diff of src/mflux/models/z_image/cli/z_image_generate.py, bring z_image.py (and _core.run, if
 the flow after load() changed) in line with it, then add the values the failure messages print under a new label."""
 
+import ast
 import importlib.metadata
 import inspect
 import json
 import sys
 import warnings
+from argparse import Namespace
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -17,7 +19,9 @@ from typing import Any
 import pytest
 from _fakes import FakeZImage
 from _fingerprint import ast_fingerprint, function_body_dumps, statements_fingerprint_from
+from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
+from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.models.z_image.cli import z_image_generate
 from mflux.models.z_image.cli.z_image_generate import ZImageCommand
 from mflux.models.z_image.variants.z_image import ZImage
@@ -25,69 +29,46 @@ from mflux.utils.apple_silicon import AppleSiliconUtil
 from mflux.utils.generated_image import GeneratedImage
 
 import mflux
-from mflux.extras.myplugin import z_image
+from mflux.extras.myplugin import _core, z_image
 
-# The reviewed mflux sources. The released digests were recorded on PyPI 0.22.0 (commit 31c9640); v.0.23.0 has the
-# same z_image_generate.py, variants/z_image.py, cli/parser/parsers.py and utils/apple_silicon.py. CI checks every
-# digest on CPython 3.11 and 3.13.
-RELEASED = "mflux v.0.22.0 / v.0.23.0 released"
-# main a3b21fc: --vae-full-precision in build_parser, VAEDecodeOptions.warn_encode_only_tiling() in main() (mirrored
-# by z_image.warn_before_load), VAEDecodeOptions.generation_parameters in ZImage.generate_image (mirrored by
-# FakeZImage). ZImageCommand.load applies the decode mode itself, and the flow after load() is unchanged.
-MAIN = "mflux main a3b21fc, reviewed 2026-10-23"
-# PyPI 0.24.0 (tag v.0.24.0, commit 8a7fd0a), reviewed 2026-10-28 on CPython 3.13. Against main a3b21fc it leaves
-# z_image_generate.py, variants/z_image.py, utils/apple_silicon.py and VAEDecodeOptions unchanged. Its parsers.py adds
-# add_cfg_end_arguments (not called by the Z-Image parser), a bake_by_default parameter on add_lora_arguments (default
-# True, as before) and a -C replay of bake_lora; none of it moves a pin here.
+# The reviewed mflux source: PyPI 0.24.0 (tag v.0.24.0, commit 8a7fd0a), the oldest release this package supports,
+# reviewed on 2026-10-28 on CPython 3.13. CI checks every digest on CPython 3.11 and 3.13.
 RELEASED_0_24 = "mflux v.0.24.0 released"
-# The versions each reviewed source reports. mflux main a3b21fc still reports 0.23.0, so the version alone cannot tell
-# it from the release; a release that ships main's code reports a version its label does not list.
-REPORTED_VERSIONS = {RELEASED: ("0.22.0", "0.23.0"), MAIN: ("0.23.0",), RELEASED_0_24: ("0.24.0",)}
+# The versions each reviewed source reports.
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",)}
 
-BUILD_PARSER_DIGESTS = {RELEASED: "664a51c06e0e4b7a", MAIN: "6a85a43cc52fd44f", RELEASED_0_24: "6a85a43cc52fd44f"}
-MAIN_DIGESTS = {RELEASED: "38cfe3fe3f1142f7", MAIN: "1f3058eda927d0fe", RELEASED_0_24: "1f3058eda927d0fe"}
-# ZImageCommand.load, which _core.run calls for the model. main a3b21fc: it binds the ZImage it builds, calls
-# VAEDecodeOptions.apply(args, model) and returns the model (the released load returns ZImage(...) directly).
-LOAD_DIGESTS = {RELEASED: "658f557e2fa63a64", MAIN: "d91dfaa735845a7b", RELEASED_0_24: "d91dfaa735845a7b"}
+BUILD_PARSER_DIGESTS = {RELEASED_0_24: "6a85a43cc52fd44f"}
+MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe"}
+# ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
+# model) and returns the model.
+LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-GENERATE_IMAGE_DIGESTS = {RELEASED: "a0e64be2aa3d8bc9", MAIN: "88204535dc85b78e", RELEASED_0_24: "88204535dc85b78e"}
+GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e"}
 # ZImage._predict, the factory a plugin replaces to keep per-step state, and the chip check that decides whether mflux
 # compiles the step it returns. AGENTS.md's "Compile and memory" section describes both.
-PREDICT_DIGESTS = {
-    RELEASED: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
-    MAIN: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
-    RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
-}
+PREDICT_DIGESTS = {RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5")}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
-RELEASED_OPTION_STRINGS = (
+OPTION_STRINGS = (
     "--auto-seeds", "--bake-lora", "--base-model", "--battery-percentage-stop-limit", "--compute-precision",
     "--config-from-conf", "--config-from-metadata", "--float32", "--guidance", "--height", "--help", "--image",
     "--image-path", "--image-strength", "--lora", "--lora-paths", "--lora-scales", "--lora-style", "--low-ram",
     "--make-conf", "--metadata", "--mlx-cache-limit-gb", "--model", "--negative-prompt", "--no-bake-lora",
-    "--no-exif", "--no-float32", "--no-metadata", "--no-pid-decode", "--output", "--pid-decode",
-    "--pid-degrade-sigma", "--prompt", "--prompt-file", "--quantize", "--scheduler", "--seed", "--steps",
-    "--stepwise-image-output-dir", "--vae-tile-size", "--vae-tiling", "--verbose", "--width", "-B", "-C", "-h", "-m",
-    "-q", "-v",
+    "--no-exif", "--no-float32", "--no-metadata", "--no-pid-decode", "--no-vae-full-precision", "--output",
+    "--pid-decode", "--pid-degrade-sigma", "--prompt", "--prompt-file", "--quantize", "--scheduler", "--seed",
+    "--steps", "--stepwise-image-output-dir", "--vae-full-precision", "--vae-tile-size", "--vae-tiling", "--verbose",
+    "--width", "-B", "-C", "-h", "-m", "-q", "-v",
 )  # fmt: skip
-RELEASED_DESTS = (
+DESTS = (
     "auto_seeds", "bake_lora", "base_model", "battery_percentage_stop_limit", "compute_precision",
     "config_from_metadata", "float32", "guidance", "height", "help", "image", "image_path", "image_strength", "lora",
     "lora_paths", "lora_scales", "lora_style", "low_ram", "metadata", "mlx_cache_limit_gb", "model", "negative_prompt",
     "no_metadata", "output", "pid_decode", "pid_degrade_sigma", "prompt", "prompt_file", "quantize", "scheduler",
-    "seed", "steps", "stepwise_image_output_dir", "vae_tile_size", "vae_tiling", "verbose", "width",
+    "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
+    "width",
 )  # fmt: skip
-# main a3b21fc: add_vae_full_precision_arguments() adds one BooleanOptionalAction. 0.24.0 has the same options.
-VAE_FULL_PRECISION_OPTIONS = (
-    tuple(sorted((*RELEASED_OPTION_STRINGS, "--vae-full-precision", "--no-vae-full-precision"))),
-    tuple(sorted((*RELEASED_DESTS, "vae_full_precision"))),
-)
-OPTIONS = {
-    RELEASED: (RELEASED_OPTION_STRINGS, RELEASED_DESTS),
-    MAIN: VAE_FULL_PRECISION_OPTIONS,
-    RELEASED_0_24: VAE_FULL_PRECISION_OPTIONS,
-}
+OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS)}
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
 # from there on (load, callback registration, the per-seed generate/save loop, the except/finally). _core.run mirrors
@@ -96,9 +77,26 @@ POST_LOAD = {
     "mflux-generate-z-image-myplugin": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED: "812cb2e320c4eaee", MAIN: "812cb2e320c4eaee", RELEASED_0_24: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee"},
     ),
 }
+
+# mflux's model-path rules, as (priority, name, check, action value). _core._refuse_unknown_model refuses before load
+# the names these rules would send to the "error" rule inside load(): no path that exists and not org/model in shape
+# (_core._is_hf_format, a copy of the predicate behind the "is_hf_format" check).
+PATH_RESOLUTION_RULES = {
+    RELEASED_0_24: [
+        (0, "none", "is_none", "Use local filesystem path"),
+        (1, "local", "exists_locally", "Use local filesystem path"),
+        (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
+        (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
+        (4, "error", "always", "Path not found"),
+    ]
+}
+# PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
+# names the rules, not what they do; these two pin that.
+PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374"}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323"}
 
 REVIEW_FIRST = (
     "review the mflux change first (AGENTS.md, 'When the drift test fails'), then record this value under a label "
@@ -127,6 +125,204 @@ def parser_options() -> tuple[tuple[str, ...], tuple[str, ...]]:
 
 def prediction_step_digests() -> tuple[str, str]:
     return ast_fingerprint(ZImage._predict), ast_fingerprint(AppleSiliconUtil.is_m1_or_m2)
+
+
+def path_resolution_rules() -> list[tuple[int, str, str, str]]:
+    return sorted((rule.priority, rule.name, rule.check, rule.action.value) for rule in PathResolution.RULES)
+
+
+def test_mflux_path_resolution_rules_are_reviewed_ones() -> None:
+    """Bug: mflux adds or reorders a model-path rule (a registry lookup before "error", say), and the plugin's
+    refusal of names that are no path and not org/model in shape turns away a --model mflux now loads."""
+    actual = path_resolution_rules()
+    assert reviewed_sources(PATH_RESOLUTION_RULES, actual), (
+        f"PathResolution.RULES changed: review _core._refuse_unknown_model; {REVIEW_FIRST} {actual}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("part", "function", "digests"),
+    [
+        ("PathResolution._check", PathResolution._check, PATH_RESOLUTION_CHECK_DIGESTS),
+        ("PathResolution._execute", PathResolution._execute, PATH_RESOLUTION_EXECUTE_DIGESTS),
+    ],
+)
+def test_mflux_path_rule_dispatch_is_a_reviewed_one(part: str, function, digests: dict[str, str]) -> None:
+    """Bug: mflux keeps the rule set but changes what a check tests or an action does (exists_locally rejects an
+    empty folder, LOCAL starts to raise for ""), and the refusal keeps answering for the old behaviour."""
+    actual = ast_fingerprint(function)
+    assert reviewed_sources(digests, actual), (
+        f"{part} changed: review _core._refuse_unknown_model; {REVIEW_FIRST} {actual}"
+    )
+
+
+# Names no download rule can take (none is org/model in shape), with whether mflux 0.24.0 raises FileNotFoundError
+# for each in a folder that holds ./weights/ and ./one.safetensors, with HOME there too.
+NAMES_BEFORE_THE_DOWNLOAD_RULE = [
+    ("", False), ("weights", False), ("./weights", False), ("~/weights", False), ("one.safetensors", False),
+    ("flux-dev", True), ("./no-such-folder", True), ("../no-such-folder", True), ("~/no-such-folder", True),
+    ("/no/such/folder", True), ("no/such/folder", True), ("./org", True), ("~/org", True),
+]  # fmt: skip
+
+
+def test_mflux_resolves_an_empty_model_name_to_no_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Bug: mflux starts to treat --model "" as a path (or an error), and the plugin, which lets "" through to run the
+    command's default model, sends it into a load that fails or loads the working folder."""
+    monkeypatch.chdir(tmp_path)
+    assert PathResolution.resolve("") is None
+
+
+@pytest.mark.parametrize(("name", "raises"), NAMES_BEFORE_THE_DOWNLOAD_RULE)
+def test_the_plugin_refuses_exactly_the_names_mflux_cannot_resolve(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, raises: bool
+) -> None:
+    """Bug: the refusal and mflux's own resolve part ways on a name that never reaches a download (the refusal skips
+    expanding ~, or mflux starts to resolve a bare name), so the plugin refuses a model mflux loads or lets through a
+    name that ends in load()'s traceback."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "one.safetensors").touch()
+    assert not PathResolution._is_hf_format(name), "the name would reach the download rule"
+    try:
+        PathResolution.resolve(name)
+        mflux_raises = False
+    except FileNotFoundError:
+        mflux_raises = True
+    try:
+        _core._refuse_unknown_model(z_image.build_parser(), Namespace(model_path=name))
+        refused = False
+    except SystemExit:
+        refused = True
+    assert (refused, mflux_raises) == (raises, raises)
+
+
+def test_copied_hf_format_check_matches_mflux() -> None:
+    """Bug: _core._is_hf_format drifts from mflux's PathResolution._is_hf_format (a check dropped or changed in the
+    copy, or mflux changes its own), so the plugin refuses a repo id mflux downloads or lets through a name mflux
+    rejects inside load()."""
+    assert function_body_dumps(_core._is_hf_format) == function_body_dumps(PathResolution._is_hf_format)
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        # The names tests/test_run.py's refusal tests use: refused, a local path, a repo id not on this machine.
+        "flux-dev", "./no-such-folder", "../no-such-folder", "~/no-such-folder", "/no/such/folder", "no/such/folder",
+        "weights", "./weights", "~/weights", "one.safetensors", "someorg/not-downloaded",
+        # org/model names, and near misses.
+        "Tongyi-MAI/Z-Image", "black-forest-labs/FLUX.1-dev", "org/model", "org/", "/model", "./org", "../org", "~/org", "",
+        None,
+    ],
+)  # fmt: skip
+def test_copied_hf_format_check_agrees_with_mflux(name: str | None) -> None:
+    """Bug: the copy answers differently from mflux's predicate for a name the refusal sees (a ./ prefix not
+    excluded, two slashes taken as a repo id), so the plugin and mflux disagree on what is a Hugging Face repo id."""
+    assert _core._is_hf_format(name) == PathResolution._is_hf_format(name)
+
+
+def test_copied_argv_scan_matches_mflux() -> None:
+    """Bug: _core._option_was_provided drifts from mflux's CommandLineParser._option_was_provided (the --option=value
+    or -qVALUE form dropped from the copy, or mflux changes its own), so the Z-Image negative-prompt warning fires
+    where mflux's would not, or stays silent where it would fire."""
+    assert ast_fingerprint(_core._option_was_provided) == ast_fingerprint(CommandLineParser._option_was_provided)
+
+
+@pytest.mark.parametrize(
+    ("argv", "names", "provided"),
+    [
+        (["--negative-prompt", "x"], ("--negative-prompt",), True),
+        (["--negative-prompt=x"], ("--negative-prompt",), True),
+        (["--negative-promptx"], ("--negative-prompt",), False),
+        (["--prompt", "use --negative-prompt"], ("--negative-prompt",), False),
+        ([], ("--negative-prompt",), False),
+        (["-q", "8"], ("-q",), True),
+        (["-q8"], ("-q",), True),
+        (["-"], ("-q",), False),
+        (["--quantize=8"], ("-q", "--quantize"), True),
+        (["--lora-scales", "0.5"], ("--lora-paths", "--lora-scales"), True),
+        (["--guidance", "4"], ("--negative-prompt",), False),
+    ],
+)
+def test_copied_argv_scan_agrees_with_mflux(monkeypatch: pytest.MonkeyPatch, argv, names, provided: bool) -> None:
+    """Bug: the copy answers differently from mflux's scan for an argv the Z-Image command sees (the --option=value
+    form missed, a prefix taken as the option), so the plugin and mflux disagree on whether an option was given."""
+    monkeypatch.setattr(sys, "argv", ["mflux-generate-z-image-myplugin", *argv])
+    assert _core._option_was_provided(*names) == CommandLineParser._option_was_provided(*names) == provided
+
+
+def _is_private(name: str) -> bool:
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+
+
+def _is_mflux_module(module: str) -> bool:
+    return module == "mflux" or module.startswith("mflux.")
+
+
+def private_names(source: str) -> list[str]:
+    """Every private name the source could reach mflux through: any non-dunder _ attribute (on any object, since the
+    scan can't tell an mflux object from another), getattr/hasattr/setattr/delattr with a constant _ name, a _ name
+    imported from mflux, and a _ part in an mflux module path. The package's own helpers are bare names imported
+    relatively, so they don't count."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and _is_private(node.attr):
+            found.append(f".{node.attr}")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "hasattr", "setattr", "delattr"}
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and _is_private(node.args[1].value)
+        ):
+            found.append(f"{node.func.id}(..., {node.args[1].value!r})")
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and _is_mflux_module(node.module or ""):
+            found += [f"from {node.module}" for part in (node.module or "").split(".") if _is_private(part)]
+            found += [f"import {alias.name}" for alias in node.names if _is_private(alias.name)]
+        elif isinstance(node, ast.Import):
+            found += [
+                f"import {alias.name}"
+                for alias in node.names
+                if _is_mflux_module(alias.name) and any(_is_private(part) for part in alias.name.split("."))
+            ]
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "private"),
+    [
+        ("from mflux.cli.parser.parsers import CommandLineParser\nCommandLineParser._option_was_provided('-m')", True),
+        ("from mflux.models.z_image.cli import z_image_generate\nz_image_generate.CommandLineParser._x()", True),
+        ("parser = build_parser()\nparser._actions", True),
+        ("from mflux.cli.parser.parsers import CommandLineParser as P\nP._option_was_provided('-m')", True),
+        ("getattr(PathResolution, '_is_hf_format')", True),
+        ("from mflux.cli.parser.parsers import _helper", True),
+        ("from mflux.models.common._private import Name", True),
+        ("import mflux.models._private", True),
+        ("x.__name__", False),
+        ("getattr(args, 'model_path', None)", False),
+        ("getattr(args, '__doc__')", False),
+        ("from mflux.cli.parser.parsers import CommandLineParser", False),
+        ("from ._core import _option_was_provided\n_option_was_provided('-m')", False),
+        ("import mflux.models.common.resolution.path_resolution", False),
+    ],
+)
+def test_the_private_name_scan_sees_each_shape(source: str, private: bool) -> None:
+    """Bug: the scan misses a shape of private use (a module-then-class chain, an instance, an alias, getattr with a
+    constant name, a _ part in an mflux module path), so shipped code uses that private name and the scan below stays
+    green; or it flags a dunder or the package's own private helpers, and the scan can never pass."""
+    assert bool(private_names(source)) == private
+
+
+def test_shipped_code_uses_no_private_mflux_name() -> None:
+    """Bug: the package calls a private mflux name again (PathResolution._is_hf_format, say); with no upper bound on
+    mflux, a rename there turns every run that reaches the call into a traceback."""
+    paths = sorted(Path(_core.__file__).parent.rglob("*.py"))
+    assert "_core.py" in {path.name for path in paths}, "the scan found no shipped code to read"
+    found = [f"{path.name} {name}" for path in paths for name in private_names(path.read_text(encoding="utf-8"))]
+    assert found == []
 
 
 def test_mflux_build_parser_is_a_reviewed_one() -> None:
@@ -212,6 +408,9 @@ def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
         "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
         "generate_image": possible(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
         "prediction step": possible(PREDICT_DIGESTS, prediction_step_digests()),
+        "path resolution rules": possible(PATH_RESOLUTION_RULES, path_resolution_rules()),
+        "PathResolution._check": possible(PATH_RESOLUTION_CHECK_DIGESTS, ast_fingerprint(PathResolution._check)),
+        "PathResolution._execute": possible(PATH_RESOLUTION_EXECUTE_DIGESTS, ast_fingerprint(PathResolution._execute)),
         **{
             f"post-load {command}": possible(digests, statements_fingerprint_from(main, first_statement))
             for command, (main, first_statement, digests) in POST_LOAD.items()
@@ -251,8 +450,14 @@ def test_copied_preload_statements_match_mflux_main() -> None:
     """Bug: the copy in z_image.py drifts from mflux's main() (a dropped or changed warning branch),
     so the plugin no longer behaves like mflux-generate-z-image before load."""
     mflux_statements = set(function_body_dumps(z_image_generate.main))
+    # The one exemption: z_image.py calls _core's copy of the argv scan (test_copied_argv_scan_matches_mflux) where
+    # mflux's main() calls CommandLineParser._option_was_provided. Spelled back to mflux's call before comparing.
+    local, mflux_call = (
+        "(Name,id='_option_was_provided')",
+        "(Attribute,value=(Name,id='CommandLineParser'),attr='_option_was_provided')",
+    )
     for copied in (z_image.warn_ineffective_options,):
-        dumps = function_body_dumps(copied)
+        dumps = [dump.replace(local, mflux_call) for dump in function_body_dumps(copied)]
         # An empty body would match vacuously.
         assert dumps, f"{copied.__name__} has no statements to compare"
         unmatched = [dump for dump in dumps if dump not in mflux_statements]
