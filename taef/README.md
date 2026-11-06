@@ -7,8 +7,8 @@ writes a live preview image while the picture is being denoised. Open the file i
 Ctrl-C when the composition is wrong instead of waiting for the last step.
 
 The preview is the image as it stands after the current step, decoded by a tiny decoder from
-[mlx-taef](https://github.com/IonDen/mlx-taef). Early steps look noisy and it gets clearer from about the middle of
-the run. It is not the final image, which mflux still decodes with the model's own VAE and saves the usual way.
+[mlx-taef](https://github.com/IonDen/mlx-taef). It is not the final image, which mflux still decodes with the model's
+own VAE and saves the usual way.
 
 mflux-taef lives in the `taef/` folder of [mflux-plugins](https://github.com/mflux-community/mflux-plugins), the plugin
 repository of the mflux-community organization. Denis Ineshin maintains it. The tiny decoder is in mlx-taef, a separate
@@ -55,15 +55,18 @@ Three options control the preview:
 |---|---|---|
 | `--taef-preview PATH` | `<output name>.preview.png`, next to the output image | Where the preview goes: a `.png`, `.jpg`, `.jpeg` or `.webp` file (any letter case). `PATH` may contain `{seed}`. |
 | `--taef-every N` | every step | Update the preview every `N` steps; `N` is 1 or more. |
-| `--taef-frames` | off | Keep every step's preview as its own file, `<preview name>_stepNN.<suffix>`, instead of overwriting one file. It writes every step, so it can't be combined with `--taef-every`. |
+| `--taef-frames` | off | Keep every step as its own file, `<preview name>_stepNN.<suffix>`. |
+
+`--taef-frames` writes every step, so it can't be combined with `--taef-every`. `NN` counts the steps this run
+executed, so an image-to-image run, which starts partway through the schedule, numbers from its own first step.
 
 ### Where the files go
 
 By default the preview sits next to the final image: for `--output out.png` it is `out.preview.png`. With several
 seeds, mflux adds `_seed_<n>` to the output name, so the previews get it too.
 
-An explicit `--taef-preview PATH` is one live file, and each seed overwrites it in turn, so a viewer you leave open
-follows the run. Put `{seed}` in `PATH` to get one file per seed instead. With `--taef-frames` and several seeds,
+An explicit `--taef-preview PATH` is one live file, and each seed overwrites it in turn, so reopen the file to see the
+latest preview. Put `{seed}` in `PATH` to get one file per seed instead. With `--taef-frames` and several seeds,
 `_seed_<n>` is added to the end of the name, so each seed keeps its own `..._seed_<n>_stepNN...` files. The line the
 command prints before each seed shows the real path for that seed.
 
@@ -74,29 +77,47 @@ composite image. A preview goes through the tiny decoder into one file. mlx-taef
 [comparison page](https://github.com/IonDen/mlx-taef/blob/main/COMPARISON.md) has the published decode speed and the
 similarity to the full VAE for Z-Image; this package adds no timing figure of its own.
 
+The two options can run in the same command: mflux writes its step images to its directory and this package writes the
+preview file or frames to the preview path.
+
 ## What the command checks
 
 The command checks your request before it loads any weights. When it can't run, it stops with exit code 2 and a message
-that names the plain mflux command to use instead. That happens for:
+that says why. These refusals also tell you to run the plain mflux command to generate without previews:
 
 - `--taef-every` below 1;
-- `--taef-every` together with `--taef-frames`;
 - a preview file that doesn't end in `.png`, `.jpg`, `.jpeg` or `.webp`;
-- a `--taef-preview` with a `{...}` field other than `{seed}`;
-- a preview path that names the same file as `--output`. The match ignores letter case, because a default macOS volume
-  does. Without this check the last preview would take the name, and mflux would save the final image under another one;
+- a `--taef-preview` with a `{...}` field other than `{seed}`, or a `{seed}` field with more than a width. `{seed}`
+  takes a width of one to three digits (padded with spaces, or with zeros when it starts with 0), optionally followed
+  by `d`, so `{seed:04d}` and `{seed:3}` run. A conversion such as `{seed!r}`, a bare `{seed:d}`, any other spec and a
+  width of more than three digits (`{seed:0004}` included) are refused.
+
+These refusals only explain the problem:
+
+- `--taef-every` together with `--taef-frames`;
+- a `--taef-preview` path that is an existing directory or a symbolic link. The check runs before anything loads. With
+  `--taef-frames` the same goes for an existing directory or symbolic link at any `<preview name>_stepNN.<suffix>`
+  frame name in the preview's folder;
+- a preview file name over 255 bytes, which is the most a file name can have. A `{seed:999}` width can reach that. With
+  `--taef-frames` the longest frame name is measured. Without this check the model would load and the first save would
+  fail, which turns the preview off;
+- a preview path that names the same file as `--output`, or, with several seeds, as any seed's output (for example
+  `--seed 2 12 --output a.png --taef-preview 'a_seed_1{seed}.png'`). The match ignores letter case, because a default
+  macOS volume does. With `--taef-frames` the preview path itself is never written, so `--output` is compared with the
+  `<preview name>_stepNN.<suffix>` frame names instead. Without this check the last preview would take the name, and
+  mflux would save the final image under another one;
 - a `--model` that is not one of mflux's names, not a local path that exists and not a Hugging Face repo id
-  (`org/model`);
-- a model mlx-taef has no decoder for;
-- anything mflux's own option checks refuse.
+  (`org/model`). On an mflux whose model-path rules differ from the checked release, the name is left to mflux. A
+  missing path restored with `-C` names the file it came from;
+- anything mflux's own option checks refuse, with mflux's own message.
 
 Exit codes:
 
-| Code | When |
-|---|---|
-| 0 | The run finished, you pressed Ctrl-C (the last preview stays on disk), or the prompt file couldn't be read. |
-| 1 | The decoder couldn't be prepared, which is checked before the model loads and prints `could not prepare the TAEF preview decoder`, or the run failed after the model loaded (the traceback is printed). |
-| 2 | The request was refused before any weights loaded. |
+- 0: the run finished, you pressed Ctrl-C during generation (the last preview stays on disk), or the prompt file
+  couldn't be read.
+- 1: the decoder couldn't be prepared (checked before the model loads; it prints `could not prepare the TAEF preview
+  decoder`), or the run failed after the model loaded (the traceback is printed).
+- 2: the request was refused before any weights loaded.
 
 If a preview fails during a run (a decode error, a folder you can't write to), the command prints one warning on
 stderr, stops previews for that seed and finishes the image. The plugin writes nothing into the image's metadata or the
@@ -105,11 +126,12 @@ stderr, stops previews for that seed and finishes the image. The plugin writes n
 ## What it doesn't do
 
 - No fast final decode. The tiny decoder is for previews; the saved image still uses the model's VAE. mflux's own
-  `--low-ram` and the row-strip decode remain the options for decode memory.
+  `--low-ram` stays the option for decode memory. mflux decodes in row strips by default, and `--vae-full-precision`
+  switches that off.
 - No composite image, GIF or video, no terminal or window display, and no record in the image's metadata.
 - No prediction previews for Z-Image: mflux doesn't pass the model's prediction to Z-Image callbacks, so the preview
   decodes the latent.
-- No FLUX.1, FLUX.2, Qwen-Image or other model families yet, and no Qwen-Image 2.1.
+- No FLUX.1, FLUX.2, Qwen-Image or other model families yet (Qwen-Image 2.1 included).
 - No command that combines TAEF with TeaCache (see the next section).
 
 ## With mflux-teacache
