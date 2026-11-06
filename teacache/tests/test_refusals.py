@@ -19,6 +19,7 @@ from conftest import FAKES
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.compute_precision.compute_precision import ComputePrecision
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
+from mflux.models.common.resolution.actions import PathAction, Rule
 from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.models.z_image.cli import z_image_generate
 from mlx_teacache import TeaCacheUncalibratedCheckpointWarning, VariantInfo
@@ -728,6 +729,40 @@ def test_a_model_mflux_cannot_resolve_is_refused_before_load(
     )
 
 
+@BOTH_COMMANDS
+def test_a_name_is_left_to_mflux_when_its_path_rules_are_not_the_reviewed_ones(
+    run_command, teacache, monkeypatch, tmp_path, adapter
+) -> None:
+    """Bug: the refusal runs whatever mflux's model-path rules are, so on an mflux that adds a rule (a lookup of
+    registry names, say) a --model that rule loads is refused before load. The reviewed rules refuse the same name:
+    test_a_model_mflux_cannot_resolve_is_refused_before_load."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    added = Rule(priority=5, name="registry", check="is_registry_name", action=PathAction.LOCAL)
+    monkeypatch.setattr(PathResolution, "RULES", PathResolution.RULES | {added})
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", TeaCacheUncalibratedCheckpointWarning)
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "flux-dev"], adapter)
+    (built,) = built_models(adapter)
+    assert built.init_kwargs["model_path"] == "flux-dev"
+
+
+@BOTH_COMMANDS
+@pytest.mark.parametrize("rules", [frozenset({object()}), None], ids=["rules-without-fields", "rules-not-a-set"])
+def test_a_name_is_left_to_mflux_when_its_path_rules_cannot_be_read(
+    run_command, teacache, monkeypatch, tmp_path, adapter, rules
+) -> None:
+    """Bug: the rule-set comparison reads rule.priority and rule.check (or iterates RULES) unguarded, so on an mflux
+    that reshapes its rules every unknown --model ends in an AttributeError or TypeError traceback before load, not in
+    mflux's own handling of the name."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(PathResolution, "RULES", rules)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", TeaCacheUncalibratedCheckpointWarning)
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "flux-dev"], adapter)
+    (built,) = built_models(adapter)
+    assert built.init_kwargs["model_path"] == "flux-dev"
+
+
 @SIDECAR_LEFT_OPEN_BY_MFLUX
 def test_a_sidecar_whose_model_path_is_gone_is_refused_before_load(run_command, teacache, capsys, tmp_path) -> None:
     """Bug: the check reads only a --model typed on the command line, so replaying a -C sidecar from a run on a local
@@ -737,6 +772,40 @@ def test_a_sidecar_whose_model_path_is_gone_is_refused_before_load(run_command, 
         json.dumps({"model": "Tongyi-MAI/Z-Image", "model_path": "./gone", "prompt": "p", "seed": 3, "steps": 5})
     )
     refused(run_command, ["-C", str(sidecar)], capsys, expected="Model not found: './gone'.")
+
+
+def gone_sidecar(tmp_path: Path) -> Path:
+    sidecar = tmp_path / "gone.metadata.json"
+    sidecar.write_text(
+        json.dumps({"model": "Tongyi-MAI/Z-Image", "model_path": "./gone", "prompt": "p", "seed": 3, "steps": 5})
+    )
+    return sidecar
+
+
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+def test_a_model_path_restored_from_a_sidecar_is_named_as_coming_from_it(
+    run_command, teacache, capsys, tmp_path
+) -> None:
+    """Bug: the refusal of a missing path never says the path came from the -C file, so the user looks for a --model
+    they never typed."""
+    sidecar = gone_sidecar(tmp_path)
+    err = refused(run_command, ["-C", str(sidecar)], capsys, expected="Model not found: './gone'.")
+    assert err.splitlines()[-2:] == [
+        "mflux-generate-z-image-teacache: error: Model not found: './gone'. Supported on this command: z-image, "
+        "zimage. For other weights, give a local path that exists or a Hugging Face repo id (org/model).",
+        f"Tip: that path came from {sidecar}. Pass --model PATH to use your own copy.",
+    ]
+
+
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+@pytest.mark.parametrize("typed", [["--model", "./gone"], ["-m", "./gone"], ["--model=./gone"], ["-m./gone"]])
+def test_a_typed_model_path_is_not_named_as_coming_from_the_sidecar(
+    run_command, teacache, capsys, tmp_path, typed
+) -> None:
+    """Bug: the tip checks only that -C was given, so a --model (or -m) typed next to it is said to come from the -C
+    file."""
+    err = refused(run_command, ["-C", str(gone_sidecar(tmp_path)), *typed], capsys, expected="Model not found")
+    assert "Tip:" not in err
 
 
 @BOTH_COMMANDS
@@ -766,6 +835,22 @@ def test_a_repo_id_that_is_not_on_this_machine_is_not_refused(run_command, teaca
         run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", "someorg/not-downloaded"], adapter)
     (built,) = built_models(adapter)
     assert built.init_kwargs["model_path"] == "someorg/not-downloaded"
+
+
+@pytest.mark.parametrize(
+    ("adapter", "model"),
+    [pytest.param(z_image.ADAPTER, "z-image", id="z-image"), pytest.param(qwen_image.ADAPTER, "qwen-image", id="qwen")],
+)
+def test_an_empty_model_name_runs_the_default_model(run_command, teacache, adapter, model) -> None:
+    """Bug: the unknown-model refusal tests model_path against None only, so --model "" (which mflux's parser turns
+    into model_path "" and its loader then runs as the command's default model) is refused as 'Model not found'; or
+    the checkpoint check tests it against None only, so the default model, the tuned one, warns under an empty name."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        run_command(["--prompt", "x", "--seed", "1", "--steps", "5", "--model", ""], adapter)
+    (built,) = built_models(adapter)
+    assert built.model_config is AVAILABLE_MODELS[model]
+    assert built.init_kwargs["model_path"] == ""
 
 
 def test_the_supported_names_are_every_alias_mflux_accepts() -> None:
