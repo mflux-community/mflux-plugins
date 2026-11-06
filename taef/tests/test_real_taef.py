@@ -8,7 +8,6 @@ import gc
 import logging
 import sys
 import weakref
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +20,7 @@ import pytest
 from _fakes import FakeZImage, LoopingFakeZImage
 from mflux.models.z_image.cli import z_image_generate, z_image_turbo_generate
 from mlx_taef.integrations.mflux import LivePreviewCallback
+from mlx_taef.kernels import get_kernel
 
 from mflux.extras.taef import _core, z_image, z_image_turbo
 
@@ -37,12 +37,25 @@ def random_decoder(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
     def get_or_convert(kernel: Any, *, role: str = "decoder") -> Path:
         assert role == "decoder", f"the live preview asked mlx-taef for the {role}; it decodes only"
+        # Seeded, so every build has the same weights and a failing preview test reproduces.
+        mx.random.seed(0)
         model = mlx_taef.api.ZImage()
         mx.save_safetensors(str(path), dict(mlx.utils.tree_flatten(model.decoder.parameters())))
         return path
 
     monkeypatch.setattr(mlx_taef.download, "get_or_convert", get_or_convert)
     return path
+
+
+def test_the_random_decoder_is_the_same_on_every_build(random_decoder: Path) -> None:
+    """Bug: the random decoder is built without an MLX seed, so its weights, and the previews a failing test writes,
+    change from run to run and a failure does not reproduce."""
+    kernel = get_kernel("zimage")
+    first = mx.load(str(mlx_taef.download.get_or_convert(kernel)))
+    mx.eval(first)
+    second = mx.load(str(mlx_taef.download.get_or_convert(kernel)))
+    assert sorted(first) == sorted(second)
+    assert all(mx.array_equal(first[name], second[name]).item() for name in first)
 
 
 @pytest.fixture
@@ -63,15 +76,6 @@ def real_preview(run_command, random_decoder: Path, monkeypatch: pytest.MonkeyPa
     return built
 
 
-@pytest.fixture
-def restore_cache_limit() -> Iterator[None]:
-    """--low-ram makes mflux's MemorySaver set MLX's process-wide cache limit; put the session's limit back after."""
-    previous = mx.set_cache_limit(0)
-    mx.set_cache_limit(previous)
-    yield
-    mx.set_cache_limit(previous)
-
-
 @pytest.mark.parametrize(
     ("adapter", "model_argv"),
     [
@@ -79,16 +83,30 @@ def restore_cache_limit() -> Iterator[None]:
         pytest.param(z_image.ADAPTER, ["--model", "z-image-turbo"], id="base"),
     ],
 )
+@pytest.mark.parametrize(
+    ("preview_argv", "written", "image_format"),
+    [
+        pytest.param([], "o.preview.png", "PNG", id="default-png"),
+        pytest.param(["--taef-preview", "live.jpg"], "live.jpg", "JPEG", id="jpg"),
+        pytest.param(["--taef-preview", "live.webp"], "live.webp", "WEBP", id="webp"),
+        # ONE_SEED's seed is 3; the folder does not exist before the run.
+        pytest.param(["--taef-preview", "p/{seed}.webp"], "p/3.webp", "WEBP", id="seed-in-a-folder"),
+    ],
+)
 def test_one_live_file_per_seed_at_the_requested_size(
-    run_command, real_preview, tmp_path: Path, adapter, model_argv
+    run_command, real_preview, tmp_path: Path, adapter, model_argv, preview_argv, written, image_format
 ) -> None:
     """Bug: the preview is never written (save_to not a Path, the callback not registered, the wrong variant), lands
-    somewhere other than next to the output, or the latent reaches the decoder with height and width swapped, so a
-    128x64 image gets a 64x128 preview."""
-    run_command([*ONE_SEED, *model_argv], adapter)
-    assert sorted(p.name for p in tmp_path.glob("o*.png")) == ["o.png", "o.preview.png"]
-    with PIL.Image.open(tmp_path / "o.preview.png") as preview:
-        assert preview.size == (128, 64)
+    somewhere other than next to the output or the path asked for (a {seed} left unformatted, the suffix replaced),
+    is written in another format than its suffix names, or the latent reaches the decoder with height and width
+    swapped, so a 128x64 image gets a 64x128 preview."""
+    run_command([*ONE_SEED, *model_argv, *preview_argv], adapter)
+    images = sorted(
+        p.relative_to(tmp_path).as_posix() for p in tmp_path.rglob("*") if p.suffix in (".png", ".jpg", ".webp")
+    )
+    assert images == sorted(["o.png", written])
+    with PIL.Image.open(tmp_path / written) as preview:
+        assert (preview.format, preview.size) == (image_format, (128, 64))
 
 
 def test_frames_write_one_file_per_step(run_command, real_preview, tmp_path: Path) -> None:
@@ -112,8 +130,8 @@ def test_every_n_writes_at_steps_zero_n_two_n(run_command, real_preview) -> None
 
 def test_previews_do_not_change_the_latents(run_command, real_preview, monkeypatch: pytest.MonkeyPatch) -> None:
     """Bug: the plugin changes what mflux generates (another seed, size, step count or scheduler handed to generate),
-    or a preview step writes into the latent it is handed, so the run with previews ends on other latents than the
-    plain mflux-generate-z-image-turbo run with the same arguments."""
+    so the run with previews ends on other latents than the plain mflux-generate-z-image-turbo run with the same
+    arguments."""
     run_command(ONE_SEED, TURBO)
     monkeypatch.setattr(sys, "argv", ["mflux-generate-z-image-turbo", *ONE_SEED])
     z_image_turbo_generate.main()
@@ -125,11 +143,11 @@ def test_previews_do_not_change_the_latents(run_command, real_preview, monkeypat
 
 
 def test_low_ram_frees_the_transformer_with_previews_on(
-    run_command, real_preview, restore_cache_limit, monkeypatch: pytest.MonkeyPatch
+    run_command, real_preview, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Bug: the plugin keeps a reference to the transformer (on the preview or anywhere it holds), which defeats the
-    drop mflux's MemorySaver does after the loop for one seed with --low-ram, so the weights stay in memory through
-    the decode."""
+    """Bug: with previews on, the drop mflux's MemorySaver does after the loop for one seed with --low-ram is skipped
+    (run() no longer registers mflux's callbacks, say), so the transformer's weights stay in memory through the
+    decode."""
     transformers: list[weakref.ref] = []
 
     class WatchedZImage(LoopingFakeZImage):

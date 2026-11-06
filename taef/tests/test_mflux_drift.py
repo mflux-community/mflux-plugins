@@ -13,6 +13,7 @@ import json
 import sys
 import textwrap
 import warnings
+from argparse import Namespace
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from _fingerprint import ast_fingerprint, function_body_dumps, statements_finger
 from mflux.callbacks.callback_manager import CallbackManager
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.callbacks.generation_context import GenerationContext
+from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.models.z_image.cli import z_image_generate, z_image_turbo_generate
@@ -49,8 +51,10 @@ MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe"}
 LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
 GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e"}
-# ZImage._predict, the factory a plugin replaces to keep per-step state, and the chip check that decides whether mflux
-# compiles the step it returns. AGENTS.md's "Compile and memory" section describes both.
+# ZImage._predict, the factory that builds the denoising step, and the chip check that decides whether mflux compiles
+# that step (mx.compile, except on M1 and M2). The preview relies on running outside it: generate_image calls the
+# in-loop callbacks after the step, on the latents it returned. A callback traced into a compiled step would write its
+# preview once, while tracing, and never again.
 PREDICT_DIGESTS = {RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5")}
 
 # The Z-Image Turbo command's parts. Its main() parses, warns about --vae-tiling and about the options Turbo ignores
@@ -114,6 +118,10 @@ PATH_RESOLUTION_RULES = {
         (4, "error", "always", "Path not found"),
     ]
 }
+# PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
+# names the rules, not what they do; these two pin that.
+PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374"}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323"}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
@@ -247,6 +255,63 @@ def test_mflux_path_resolution_rules_are_reviewed_ones() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("part", "function", "digests"),
+    [
+        ("PathResolution._check", PathResolution._check, PATH_RESOLUTION_CHECK_DIGESTS),
+        ("PathResolution._execute", PathResolution._execute, PATH_RESOLUTION_EXECUTE_DIGESTS),
+    ],
+)
+def test_mflux_path_rule_dispatch_is_a_reviewed_one(part: str, function, digests: dict[str, str]) -> None:
+    """Bug: mflux keeps the rule set but changes what a check tests or an action does (exists_locally rejects an
+    empty folder, LOCAL starts to raise for ""), and the refusal keeps answering for the old behaviour."""
+    actual = ast_fingerprint(function)
+    assert reviewed_sources(digests, actual), (
+        f"{part} changed: review _core._refuse_unknown_model; {REVIEW_FIRST} {actual}"
+    )
+
+
+# Names no download rule can take (none is org/model in shape), with whether mflux 0.24.0 raises FileNotFoundError
+# for each in a folder that holds ./weights/ and ./one.safetensors, with HOME there too.
+NAMES_BEFORE_THE_DOWNLOAD_RULE = [
+    ("", False), ("weights", False), ("./weights", False), ("~/weights", False),
+    ("one.safetensors", False), ("flux-dev", True), ("./no-such-folder", True), ("../no-such-folder", True),
+    ("~/no-such-folder", True), ("/no/such/folder", True), ("no/such/folder", True), ("./org", True), ("~/org", True),
+]  # fmt: skip
+
+
+def test_mflux_resolves_an_empty_model_name_to_no_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Bug: mflux starts to treat --model "" as a path (or an error), and the plugin, which lets "" through to run the
+    command's default model, sends it into a load that fails or loads the working folder."""
+    monkeypatch.chdir(tmp_path)
+    assert PathResolution.resolve("") is None
+
+
+@pytest.mark.parametrize(("name", "raises"), NAMES_BEFORE_THE_DOWNLOAD_RULE)
+def test_the_plugin_refuses_exactly_the_names_mflux_cannot_resolve(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, name: str, raises: bool
+) -> None:
+    """Bug: the refusal and mflux's own resolve part ways on a name that never reaches a download (the refusal skips
+    expanding ~, or mflux starts to resolve a bare name), so the plugin refuses a model mflux loads or lets through a
+    name that ends in load()'s traceback."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "weights").mkdir()
+    (tmp_path / "one.safetensors").touch()
+    assert not PathResolution._is_hf_format(name), "the name would reach the download rule"
+    try:
+        PathResolution.resolve(name)
+        mflux_raises = False
+    except FileNotFoundError:
+        mflux_raises = True
+    try:
+        _core._refuse_unknown_model(z_image.build_parser(), Namespace(model_path=name))
+        refused = False
+    except SystemExit:
+        refused = True
+    assert (refused, mflux_raises) == (raises, raises)
+
+
 def test_copied_hf_format_check_matches_mflux() -> None:
     """Bug: _core._is_hf_format drifts from mflux's PathResolution._is_hf_format (a check dropped or changed in the
     copy, or mflux changes its own), so the plugin refuses a repo id mflux downloads or lets through a name mflux
@@ -271,40 +336,119 @@ def test_copied_hf_format_check_agrees_with_mflux(name: str | None) -> None:
     assert _core._is_hf_format(name) == PathResolution._is_hf_format(name)
 
 
-# Private mflux names the package may use: only inside statements copied verbatim from an mflux main(), which
-# test_copied_preload_statements_match_mflux_main keeps equal to mflux's own and the main() pins re-review on change.
-COPIED_PRIVATE_NAMES = {"z_image.py CommandLineParser._option_was_provided"}
+def test_copied_argv_scan_matches_mflux() -> None:
+    """Bug: _core._option_was_provided drifts from mflux's CommandLineParser._option_was_provided (the --option=value
+    or -qVALUE form dropped from the copy, or mflux changes its own), so the base command's negative-prompt warning
+    fires where mflux's would not, or stays silent where it would fire."""
+    assert ast_fingerprint(_core._option_was_provided) == ast_fingerprint(CommandLineParser._option_was_provided)
+
+
+@pytest.mark.parametrize(
+    ("argv", "names", "provided"),
+    [
+        (["--negative-prompt", "x"], ("--negative-prompt",), True),
+        (["--negative-prompt=x"], ("--negative-prompt",), True),
+        (["--negative-promptx"], ("--negative-prompt",), False),
+        (["--prompt", "use --negative-prompt"], ("--negative-prompt",), False),
+        ([], ("--negative-prompt",), False),
+        (["-q", "8"], ("-q",), True),
+        (["-q8"], ("-q",), True),
+        (["-"], ("-q",), False),
+        (["--quantize=8"], ("-q", "--quantize"), True),
+        (["--lora-scales", "0.5"], ("--lora-paths", "--lora-scales"), True),
+        (["--guidance", "4"], ("--negative-prompt",), False),
+    ],
+)
+def test_copied_argv_scan_agrees_with_mflux(monkeypatch: pytest.MonkeyPatch, argv, names, provided: bool) -> None:
+    """Bug: the copy answers differently from mflux's scan for an argv the base command sees (the --option=value form
+    missed, a prefix taken as the option), so the plugin and mflux disagree on whether an option was given."""
+    monkeypatch.setattr(sys, "argv", ["mflux-generate-z-image-taef", *argv])
+    assert _core._option_was_provided(*names) == CommandLineParser._option_was_provided(*names) == provided
+
+
+def _is_private(name: str) -> bool:
+    return name.startswith("_") and not (name.startswith("__") and name.endswith("__"))
+
+
+def _is_mflux_module(module: str) -> bool:
+    return module == "mflux" or module.startswith("mflux.")
+
+
+def private_names(source: str) -> list[str]:
+    """Every private name the source could reach mflux through: any non-dunder _ attribute (on any object, since the
+    scan can't tell an mflux object from another), getattr/hasattr/setattr/delattr with a constant _ name, a subscript
+    with a constant _ string (vars(X)['_x'], X.__dict__['_x']), a _ name imported from mflux, and a _ part in an mflux
+    module path. The package's own helpers are bare names imported
+    relatively, so they don't count."""
+    found: list[str] = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and _is_private(node.attr):
+            found.append(f".{node.attr}")
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in {"getattr", "hasattr", "setattr", "delattr"}
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and _is_private(node.args[1].value)
+        ):
+            found.append(f"{node.func.id}(..., {node.args[1].value!r})")
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.slice, ast.Constant)
+            and isinstance(node.slice.value, str)
+            and _is_private(node.slice.value)
+        ):
+            found.append(f"[{node.slice.value!r}]")
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and _is_mflux_module(node.module or ""):
+            found += [f"from {node.module}" for part in (node.module or "").split(".") if _is_private(part)]
+            found += [f"import {alias.name}" for alias in node.names if _is_private(alias.name)]
+        elif isinstance(node, ast.Import):
+            found += [
+                f"import {alias.name}"
+                for alias in node.names
+                if _is_mflux_module(alias.name) and any(_is_private(part) for part in alias.name.split("."))
+            ]
+    return found
+
+
+@pytest.mark.parametrize(
+    ("source", "private"),
+    [
+        ("from mflux.cli.parser.parsers import CommandLineParser\nCommandLineParser._option_was_provided('-m')", True),
+        ("from mflux.models.z_image.cli import z_image_generate\nz_image_generate.CommandLineParser._x()", True),
+        ("parser = build_parser()\nparser._actions", True),
+        ("from mflux.cli.parser.parsers import CommandLineParser as P\nP._option_was_provided('-m')", True),
+        ("getattr(PathResolution, '_is_hf_format')", True),
+        ("from mflux.cli.parser.parsers import _helper", True),
+        ("from mflux.models.common._private import Name", True),
+        ("import mflux.models._private", True),
+        ("vars(PathResolution)['_is_hf_format']", True),
+        ("PathResolution.__dict__['_is_hf_format']", True),
+        ("x.__name__", False),
+        ("vars(args)['__doc__']", False),
+        ("getattr(args, 'model_path', None)", False),
+        ("getattr(args, '__doc__')", False),
+        ("from mflux.cli.parser.parsers import CommandLineParser", False),
+        ("from ._core import _option_was_provided\n_option_was_provided('-m')", False),
+        ("import mflux.models.common.resolution.path_resolution", False),
+    ],
+)
+def test_the_private_name_scan_sees_each_shape(source: str, private: bool) -> None:
+    """Bug: the scan misses a shape of private use (a module-then-class chain, an instance, an alias, getattr with a
+    constant name, a subscript of vars() or __dict__, a _ part in an mflux module path), so shipped code uses that private name and the scan below stays
+    green; or it flags a dunder or the package's own private helpers, and the scan can never pass."""
+    assert bool(private_names(source)) == private
 
 
 def test_shipped_code_uses_no_private_mflux_name() -> None:
     """Bug: the package calls a private mflux name again (PathResolution._is_hf_format, say); with no upper bound on
     mflux, a rename there turns every run that reaches the call into a traceback."""
-    found: list[str] = []
-    for path in sorted((Path(_core.__file__).parent).rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        imported = {
-            alias.asname or alias.name
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.level == 0 and (node.module or "").startswith("mflux")
-            for alias in node.names
-        }
-        found += [
-            f"{path.name} {alias.name}"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.ImportFrom) and node.level == 0 and (node.module or "").startswith("mflux")
-            for alias in node.names
-            if alias.name.startswith("_")
-        ]
-        found += [
-            f"{path.name} {node.value.id}.{node.attr}"
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Attribute)
-            and isinstance(node.value, ast.Name)
-            and node.value.id in imported
-            and node.attr.startswith("_")
-            and not node.attr.startswith("__")
-        ]
-    assert sorted(set(found) - COPIED_PRIVATE_NAMES) == []
+    paths = sorted(Path(_core.__file__).parent.rglob("*.py"))
+    assert "_core.py" in {path.name for path in paths}, "the scan found no shipped code to read"
+    found = [f"{path.name} {name}" for path in paths for name in private_names(path.read_text(encoding="utf-8"))]
+    assert found == []
 
 
 def test_mflux_turbo_parser_options_are_reviewed_ones() -> None:
@@ -387,6 +531,8 @@ def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
             part: possible(digests, ast_fingerprint(function)) for part, (function, digests, _) in CALLBACK_PINS.items()
         },
         "path resolution rules": possible(PATH_RESOLUTION_RULES, path_resolution_rules()),
+        "PathResolution._check": possible(PATH_RESOLUTION_CHECK_DIGESTS, ast_fingerprint(PathResolution._check)),
+        "PathResolution._execute": possible(PATH_RESOLUTION_EXECUTE_DIGESTS, ast_fingerprint(PathResolution._execute)),
         **{
             f"post-load {command}": possible(digests, statements_fingerprint_from(main, first_statement))
             for command, (main, first_statement, digests) in POST_LOAD.items()
@@ -434,7 +580,13 @@ def test_copied_preload_statements_match_mflux_main(copied, main) -> None:
     branch, or Turbo's warning fed the base command's options), so the plugin no longer behaves like the plain
     command before load."""
     mflux_statements = set(function_body_dumps(main))
-    dumps = function_body_dumps(copied)
+    # The one exemption: z_image.py calls _core's copy of the argv scan (test_copied_argv_scan_matches_mflux) where
+    # mflux's main() calls CommandLineParser._option_was_provided. Spelled back to mflux's call before comparing.
+    local, mflux_call = (
+        "(Name,id='_option_was_provided')",
+        "(Attribute,value=(Name,id='CommandLineParser'),attr='_option_was_provided')",
+    )
+    dumps = [dump.replace(local, mflux_call) for dump in function_body_dumps(copied)]
     # An empty body would match vacuously.
     assert dumps, f"{copied.__name__} has no statements to compare"
     unmatched = [dump for dump in dumps if dump not in mflux_statements]
@@ -543,11 +695,11 @@ def test_load_returns_the_class_the_fake_stands_in_for(adapter: _core.Adapter, s
 
 
 def test_the_prediction_step_and_its_compile_gate_are_reviewed_ones() -> None:
-    """Bug: mflux changes ZImage._predict (its factory signature, or when it wraps the step in mx.compile) or the chip
-    check AppleSiliconUtil.is_m1_or_m2, and the compile rules in AGENTS.md, and any _predict a plugin installs,
-    describe a step mflux no longer builds."""
+    """Bug: mflux changes ZImage._predict (what the step computes, or when it wraps the step in mx.compile) or the
+    chip check AppleSiliconUtil.is_m1_or_m2, and nobody checks that the preview still runs outside the compiled step
+    on the latents it returns."""
     actual = prediction_step_digests()
     assert reviewed_sources(PREDICT_DIGESTS, actual), (
-        f"ZImage._predict or AppleSiliconUtil.is_m1_or_m2 changed: re-read AGENTS.md's compile rules against them; "
-        f"{REVIEW_FIRST} {actual}"
+        f"ZImage._predict or AppleSiliconUtil.is_m1_or_m2 changed: check that generate_image still calls the in-loop "
+        f"callbacks outside the compiled step, on the latents it returns; {REVIEW_FIRST} {actual}"
     )

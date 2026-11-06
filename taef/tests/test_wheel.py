@@ -47,6 +47,14 @@ def test_wheel_ships_only_the_plugin_child(wheel: zipfile.ZipFile) -> None:
     ), package_files
 
 
+def test_wheel_carries_every_module_the_commands_import(wheel: zipfile.ZipFile) -> None:
+    """Bug: a build-backend include or exclude pattern leaves a module out of the wheel (only __init__.py ships, say),
+    so the installed commands fail with ModuleNotFoundError while every test against the source tree passes."""
+    names = wheel.namelist()
+    for module in ("_core.py", "z_image.py", "z_image_turbo.py"):
+        assert f"mflux/extras/taef/{module}" in names, names
+
+
 def test_wheel_declares_the_commands_and_an_mflux_floor_without_a_cap(wheel: zipfile.ZipFile) -> None:
     """Bug: a console script is missing or points at another module, or the mflux requirement loses its floor or gains
     an upper bound, so the plugin installs on an mflux without its steps or silently downgrades a newer one."""
