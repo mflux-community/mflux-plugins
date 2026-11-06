@@ -64,7 +64,8 @@ exit code 2 and a message that points to the plain mflux command. That happens f
   supported models);
 - a `--model` name mflux can't resolve, such as `flux-dev`: it is no existing path and not in `org/model` shape (the
   message lists the supported names). A local path that exists and any `org/model` name still run; a repo that
-  doesn't exist is only found at the download;
+  doesn't exist is only found at the download. On an mflux whose name rules differ from the checked release, the name
+  is left to mflux. A missing path restored with `-C` names the file it came from;
 - a distilled few-step model, where there is nothing to skip;
 - a threshold outside 0 to 1;
 - mflux's step cache. Neither command has a step-cache option. A command added later for a model that does have one
@@ -214,9 +215,9 @@ shell completions list only mflux's own commands.
 Each image records what TeaCache did, next to mflux's usual metadata: `teacache_threshold`,
 `teacache_skipped_steps`, `teacache_active_steps`, `teacache_variant`, `teacache_version` (the mlx-teacache
 version), `teacache_plugin_version` (the mflux-teacache version), `teacache_decision_rule_revision` (the revision of
-mlx-teacache's skip rule) and `teacache_mflux_version` (the mflux version). The last key is left out when mflux's
-package metadata is missing, as in a source checkout on the path; mflux's own `mflux_version` key can still be there
-in that case. Replaying a TeaCache image with plain mflux and
+mlx-teacache's skip rule) and `teacache_mflux_version` (the installed mflux package version). The last key is left
+out when mflux's package metadata is missing, as in a source checkout on the path; mflux's own `mflux_version` key
+can still be there in that case. Replaying a TeaCache image with plain mflux and
 `-C` produces the plain run, without TeaCache. Replaying it with this command uses the model's default threshold
 unless you pass `--teacache-threshold` again, because the `teacache_*` keys are not read back.
 
@@ -236,12 +237,13 @@ For measured speedups and image comparisons, see the
   upgrading to this release also upgrades mflux to 0.24; to stay on 0.1.2, pin `mflux-teacache==0.1.2`.
 - mlx-teacache 0.16.0 or newer. Its `[mflux]` extra is `mflux>=0.24`, and it lists mflux 0.24.0 as its newest checked
   release, so on 0.24.0 there is no warning. On a newer mflux either command runs and prints a warning that the
-  installed mflux is newer than the checked one, and TeaCache still applies. Under `python -W error`, that warning
-  becomes an error.
+  installed mflux is newer than the checked one, and TeaCache still applies. This holds as long as mflux keeps the
+  command steps this package wraps; a daily test against mflux's main branch catches changes. Under
+  `python -W error`, that warning becomes an error.
 
 What was run: the offline tests (fakes and a tiny random transformer, for both models) cover mflux 0.24.0 with
-mlx-teacache 0.16.0. The Qwen-Image run on real weights on mflux 0.24.0 was measured with mlx-teacache 0.14.0 and has
-not been repeated on 0.16.0. The Z-Image command has only the offline tests on mflux 0.24.
+mlx-teacache 0.16.0. The Qwen-Image runs on real weights on mflux 0.24.0 were measured with mlx-teacache 0.14.0 and
+have not been repeated on 0.16.0. The Z-Image command has only the offline tests on mflux 0.24.
 
 mflux's other options, `--float32` included, pass through unchanged.
 
