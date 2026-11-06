@@ -100,5 +100,5 @@ filterwarnings = [
     # This entry is for the mflux-main job and for any mflux newer than the library has verified; that job went red
     # on this warning on 2026-10-27 and 2026-10-28, before the entry existed. A new locked pair means reviewing this
     # entry again.
-    "default::mlx_teacache.errors.TeaCacheUntestedMfluxWarning",
+    "default::mlx_teacache.TeaCacheUntestedMfluxWarning",
 ]
