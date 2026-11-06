@@ -4,6 +4,7 @@ command relies on and FakeTeaCache cannot show."""
 import gc
 import importlib.metadata
 import json
+import tomllib
 import warnings
 import weakref
 from collections.abc import Iterator
@@ -25,6 +26,9 @@ from mlx_teacache import TeaCacheUncalibratedCheckpointWarning, TeaCacheUntested
 from mlx_teacache.testing import reset_untested_mflux_warning
 
 from mflux.extras.teacache import _core, qwen_image
+
+PYPROJECT = Path(__file__).parents[1] / "pyproject.toml"
+LOCK = Path(__file__).parents[1] / "uv.lock"
 
 
 class _Transformer:
@@ -131,11 +135,41 @@ def rearmed_untested_mflux_warning() -> Iterator[None]:
 REVIEWED_PAIR = ("0.24.0", "0.16.0")
 
 
+def locked_versions(*names: str) -> tuple[str, ...]:
+    """The versions uv.lock pins for these packages, in the order given. Fails when the lock holds a package more than
+    once (a fork by Python version or platform): one version per name could hide the other."""
+    lock = tomllib.loads(LOCK.read_text(encoding="utf-8"))
+    entries = {name: [p["version"] for p in lock["package"] if p["name"] == name] for name in names}
+    assert all(len(versions) == 1 for versions in entries.values()), f"uv.lock holds one entry per name: {entries}"
+    return tuple(entries[name][0] for name in names)
+
+
+def test_the_reviewed_pair_is_the_locked_pair() -> None:
+    """Bug: uv.lock moves mflux or mlx-teacache to a pair nobody reviewed and REVIEWED_PAIR stays behind, so the test
+    below skips on every job and nothing goes red; or the lock forks one of them into two versions and the check reads
+    only one."""
+    assert locked_versions("mflux", "mlx-teacache") == REVIEWED_PAIR
+
+
+def test_the_untested_mflux_filter_names_the_class_where_the_library_exports_it() -> None:
+    """Bug: pyproject.toml's filterwarnings entry names the warning by an internal module path
+    (mlx_teacache.errors), which mlx-teacache's stability promise does not cover; when the library moves that module,
+    pytest cannot import the category and no test runs. Another filter entry is no concern of this test."""
+    pyproject = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    entries = pyproject["tool"]["pytest"]["ini_options"]["filterwarnings"]
+    categories = [entry.split(":")[2] for entry in entries if entry.count(":") >= 2 and entry.split(":")[2]]
+    assert "mlx_teacache.TeaCacheUntestedMfluxWarning" in categories
+    assert [
+        category for category in categories if category.startswith("mlx_teacache.") and category.count(".") > 1
+    ] == []
+    assert "TeaCacheUntestedMfluxWarning" in mlx_teacache.__all__
+
+
 @pytest.mark.usefixtures("rearmed_untested_mflux_warning")
 def test_the_reviewed_pair_runs_without_the_untested_mflux_warning(run_command, monkeypatch, tmp_path: Path) -> None:
-    """Bug: the lock pairs an mflux newer than this mlx-teacache verified, or the library starts warning on the mflux
-    it says it verified, so every run of the published pair tells the user it is unchecked. Only the reviewed pair can
-    say this (the mflux-main and mlx-teacache-main jobs and the wheel test run other pairs), so any other pair skips."""
+    """Bug: the library starts warning on the mflux it says it verified, so every run of the locked pair tells the
+    user it is unchecked. Any other installed pair (the mflux-main and mlx-teacache-main jobs, the wheel test)
+    skips."""
     installed = (importlib.metadata.version("mflux"), importlib.metadata.version("mlx-teacache"))
     if installed != REVIEWED_PAIR:
         pytest.skip(f"checks the reviewed pair {REVIEWED_PAIR} (mflux, mlx-teacache); this run has {installed}")

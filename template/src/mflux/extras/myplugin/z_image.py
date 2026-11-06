@@ -10,7 +10,7 @@ from mflux.models.common.vae.vae_decode_options import VAEDecodeOptions
 from mflux.models.z_image.cli import z_image_generate
 from mflux.models.z_image.cli.z_image_generate import CONDITIONAL_OPTIONS, ZImageCommand
 
-from ._core import Adapter, run
+from ._core import Adapter, _option_was_provided, run
 
 __all__ = [
     "ADAPTER",
@@ -52,7 +52,8 @@ def refuse(parser: CommandLineParser, args: Namespace, model_config: ModelConfig
 
 
 # The function below is copied statement for statement from mflux's z_image_generate.main(),
-# which runs it before load(). tests/test_mflux_drift.py fails when it stops matching.
+# which runs it before load(), with one change: it calls _core's copy of the argv scan where mflux
+# calls CommandLineParser._option_was_provided. tests/test_mflux_drift.py fails when it stops matching.
 def warn_ineffective_options(args: Namespace, model_config: ModelConfig) -> None:
     # Warn on the EFFECTIVE behavior, not the flag value: --model may resolve to a
     # guidance-distilled variant (guidance forced to 0.0 regardless of the flag), and on
@@ -65,9 +66,7 @@ def warn_ineffective_options(args: Namespace, model_config: ModelConfig) -> None
                 "--negative-prompt": CONDITIONAL_OPTIONS["--negative-prompt"]["reason"],
             }
         )
-    elif CommandLineParser._option_was_provided("--negative-prompt") and (
-        args.guidance is None or args.guidance <= 1.0
-    ):
+    elif _option_was_provided("--negative-prompt") and (args.guidance is None or args.guidance <= 1.0):
         warnings.warn(
             f"--negative-prompt has no effect: {CONDITIONAL_OPTIONS['--negative-prompt']['reason']}"
             " Pass --guidance above 1.0 to enable it.",

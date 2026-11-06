@@ -11,6 +11,7 @@ import pytest
 from _fakes import FakeZImage
 from mflux.callbacks.instances.memory_saver import MemorySaver
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
+from mflux.models.common.resolution.actions import PathAction, Rule
 from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.utils.exceptions import ModelConfigError, StopImageGenerationException
 
@@ -267,6 +268,34 @@ def test_a_model_mflux_cannot_resolve_is_refused_before_load(
     )
 
 
+def test_a_name_is_left_to_mflux_when_its_path_rules_are_not_the_reviewed_ones(
+    run_command, monkeypatch, tmp_path: Path
+) -> None:
+    """Bug: the refusal runs whatever mflux's model-path rules are, so on an mflux that adds a rule (a lookup of
+    registry names, say) a --model that rule loads is refused before load. The reviewed rules refuse the same name:
+    test_a_model_mflux_cannot_resolve_is_refused_before_load."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    added = Rule(priority=5, name="registry", check="is_registry_name", action=PathAction.LOCAL)
+    monkeypatch.setattr(PathResolution, "RULES", PathResolution.RULES | {added})
+    run_command([*BASE, "--seed", "1", "--model", "flux-dev"])
+    (fake,) = FakeZImage.instances
+    assert fake.init_kwargs["model_path"] == "flux-dev"
+
+
+@pytest.mark.parametrize("rules", [frozenset({object()}), None], ids=["rules-without-fields", "rules-not-a-set"])
+def test_a_name_is_left_to_mflux_when_its_path_rules_cannot_be_read(
+    run_command, monkeypatch, tmp_path: Path, rules
+) -> None:
+    """Bug: the rule-set comparison reads rule.priority and rule.check (or iterates RULES) unguarded, so on an mflux
+    that reshapes its rules every unknown --model ends in an AttributeError or TypeError traceback before load, not in
+    mflux's own handling of the name."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(PathResolution, "RULES", rules)
+    run_command([*BASE, "--seed", "1", "--model", "flux-dev"])
+    (fake,) = FakeZImage.instances
+    assert fake.init_kwargs["model_path"] == "flux-dev"
+
+
 @pytest.mark.parametrize(
     "model", ["weights", "./weights", "~/weights", "{home}/weights", "{home}/weights/", "one.safetensors"]
 )
@@ -279,6 +308,38 @@ def test_a_local_path_that_exists_is_not_refused(run_command, monkeypatch, tmp_p
     model = model.format(home=tmp_path)
     run_command([*BASE, "--seed", "1", "--model", model])
     assert FakeZImage.instances[0].init_kwargs["model_path"] == model
+
+
+# mflux's parse_args reads a -C sidecar with json.load(path.open("rt")) and never closes the file
+# (mflux/cli/parser/parsers.py:479 in 0.24.0); under filterwarnings = error that ResourceWarning would fail a test that
+# replays a sidecar. Scoped to the sidecar files these tests write.
+SIDECAR_LEFT_OPEN_BY_MFLUX = pytest.mark.filterwarnings(
+    r"ignore:unclosed file <_io\.TextIOWrapper name='[^']*\.metadata\.json':ResourceWarning"
+)
+
+
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+def test_a_sidecar_whose_model_path_is_gone_is_refused_before_load(run_command, capsys, tmp_path: Path) -> None:
+    """Bug: the check reads only a --model typed on the command line, so replaying a -C sidecar from a run on a local
+    folder that has since moved ends in load()'s traceback."""
+    sidecar = tmp_path / "gone.metadata.json"
+    sidecar.write_text(
+        json.dumps({"model": "Tongyi-MAI/Z-Image", "model_path": "./gone", "prompt": "p", "seed": 3, "steps": 5})
+    )
+    with pytest.raises(SystemExit) as exit_info:
+        run_command(["-C", str(sidecar)])
+    assert exit_info.value.code == 2
+    assert FakeZImage.instances == []
+    assert "Model not found: './gone'." in capsys.readouterr().err
+
+
+def test_an_empty_model_name_runs_the_default_model(run_command) -> None:
+    """Bug: the unknown-model refusal tests model_path against None only, so --model "" (which mflux's parser turns
+    into model_path "" and its loader then runs as the command's default model) is refused as 'Model not found'."""
+    run_command([*BASE, "--seed", "1", "--model", ""])
+    (fake,) = FakeZImage.instances
+    assert fake.model_config is AVAILABLE_MODELS["z-image"]
+    assert fake.init_kwargs["model_path"] == ""
 
 
 def test_a_repo_id_that_is_not_on_this_machine_is_not_refused(run_command) -> None:
