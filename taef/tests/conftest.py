@@ -21,6 +21,7 @@ from types import ModuleType
 from typing import Any
 
 import huggingface_hub.constants
+import mlx.core as mx
 import mlx_taef.download
 import pytest
 from _fakes import FakeLivePreview, FakeZImage, LoopingFakeZImage
@@ -86,7 +87,12 @@ def isolated_cli(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Iterator[No
     # parse_args sets GeneratedImage.model_path and can switch off EXIF embedding process-wide.
     monkeypatch.setattr(GeneratedImage, "model_path", None)
     monkeypatch.setattr(ImageUtil, "embed_metadata_enabled", True)
+    # --low-ram makes mflux's MemorySaver set MLX's process-wide cache limit; put the session's limit back after each
+    # test. MLX has no getter: setting returns the previous limit.
+    cache_limit = mx.set_cache_limit(0)
+    mx.set_cache_limit(cache_limit)
     yield
+    mx.set_cache_limit(cache_limit)
     _clear_fakes()
 
 
