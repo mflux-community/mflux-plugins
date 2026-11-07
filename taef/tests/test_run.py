@@ -2,6 +2,7 @@
 
 import dataclasses
 import gc
+import importlib.metadata
 import json
 import re
 import sys
@@ -240,6 +241,48 @@ def test_turbo_warns_ignored_guidance_before_load(run_command, tmp_path: Path) -
         (UserWarning, 0)
     ]
     assert len(FakeZImage.instances) == 1  # the run did load the model, after the warning
+
+
+# --small-text-encoder is an option of mflux's own Z-Image Turbo parser from mflux main e9a5fd7 on; the Turbo command
+# reaches it through z_image_turbo_generate.build_parser() and ZImageTurboCommand.load with no plugin code.
+TURBO_HAS_SMALL_TEXT_ENCODER = any(
+    "--small-text-encoder" in action.option_strings for action in z_image_turbo_generate.build_parser()._actions
+)
+NEEDS_SMALL_TEXT_ENCODER = pytest.mark.skipif(
+    not TURBO_HAS_SMALL_TEXT_ENCODER,
+    reason=f"mflux {importlib.metadata.version('mflux')} has no --small-text-encoder on its Z-Image Turbo command",
+)
+
+
+@NEEDS_SMALL_TEXT_ENCODER
+@pytest.mark.parametrize(("argv", "passed"), [([], False), (["--small-text-encoder"], True)])
+def test_small_text_encoder_reaches_the_turbo_model(run_command, tmp_path: Path, argv, passed: bool) -> None:
+    """Bug: the Turbo command builds its model without the parsed --small-text-encoder (a load of its own, or a
+    parser that drops or defaults the option), so the run loads Qwen3-4B although the user asked for the small
+    encoder, or loads the small encoder on every run."""
+    run_command(
+        ["--prompt", "x", "--seed", "1", "--steps", "4", "--output", str(tmp_path / "o.png"), *argv],
+        adapter=z_image_turbo.ADAPTER,
+    )
+    (model,) = FakeZImage.instances
+    assert model.init_kwargs["small_text_encoder"] is passed
+
+
+@NEEDS_SMALL_TEXT_ENCODER
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+def test_a_small_text_encoder_run_replays_with_it(run_command, tmp_path: Path) -> None:
+    """Bug: FakeZImage.generate_image leaves out the small_text_encoder key that ZImage._generation_parameters adds,
+    so the sidecar tests pass against a record that drops the flag, and a -C replay of a Turbo image made with the
+    small encoder silently loads Qwen3-4B."""
+    first = tmp_path / "first.png"
+    run_command(
+        ["--prompt", "x", "--seed", "1", "--steps", "4", "--small-text-encoder", "--metadata", "--output", str(first)],
+        adapter=z_image_turbo.ADAPTER,
+    )
+    sidecar = first.with_suffix(".metadata.json")
+    assert json.loads(sidecar.read_text())["small_text_encoder"] is True
+    run_command(["-C", str(sidecar), "--output", str(tmp_path / "second.png")], adapter=z_image_turbo.ADAPTER)
+    assert [model.init_kwargs["small_text_encoder"] for model in FakeZImage.instances] == [True, True]
 
 
 # A --model that is neither a model name, a path that exists nor the org/model shape of a Hub repo id.
