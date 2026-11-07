@@ -1,7 +1,10 @@
 """Both commands run mflux's own Z-Image and Z-Image Turbo steps: load, callbacks, generate and save."""
 
 import dataclasses
+import gc
 import json
+import re
+import sys
 import warnings
 from pathlib import Path
 from typing import Any
@@ -9,7 +12,9 @@ from typing import Any
 import PIL.Image
 import pytest
 from _fakes import FakeLivePreview, FakeZImage, LoopingFakeZImage
+from _marks import SIDECAR_LEFT_OPEN_BY_MFLUX, SIDECAR_LEFT_OPEN_MESSAGE
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
+from mflux.models.common.resolution.actions import PathAction, Rule
 from mflux.models.common.resolution.path_resolution import PathResolution
 from mflux.models.z_image.cli import z_image_generate, z_image_turbo_generate
 from mflux.utils.exceptions import ModelConfigError, StopImageGenerationException
@@ -149,7 +154,8 @@ def test_an_adapter_without_pre_load_warnings_runs(run_command, adapter) -> None
 
 
 def test_a_model_config_error_becomes_exit_2(run_command, capsys) -> None:
-    """Bug: a ModelConfigError from validate escapes as a traceback instead of mflux's usage error."""
+    """Bug: a ModelConfigError from validate escapes as a traceback instead of mflux's usage error, or the preview
+    decoder is built before validate refuses."""
 
     def failing_validate(args):
         raise ModelConfigError("no such model")
@@ -159,6 +165,7 @@ def test_a_model_config_error_becomes_exit_2(run_command, capsys) -> None:
     assert exit_info.value.code == 2
     assert "no such model" in capsys.readouterr().err
     assert FakeZImage.instances == []
+    assert FakeLivePreview.instances == []
 
 
 def test_a_failure_after_load_exits_1_with_the_traceback(run_command, capsys, tmp_path: Path) -> None:
@@ -267,12 +274,14 @@ def test_a_model_mflux_cannot_resolve_is_refused_before_load(
     run_command, capsys, monkeypatch, tmp_path: Path, model, adapter, command
 ) -> None:
     """Bug: run() leaves --model to load(), whose PathResolution raises FileNotFoundError outside run()'s try, so a
-    typo ends in an uncaught traceback (exit 1), not in a refusal."""
+    typo ends in an uncaught traceback (exit 1), not in a refusal; or the refusal comes after the preview decoder was
+    built (a download on first use)."""
     monkeypatch.setenv("HOME", str(tmp_path))
     with pytest.raises(SystemExit) as exit_info:
         run_command(["--prompt", "x", "--model", model], adapter)
     assert exit_info.value.code == 2
     assert FakeZImage.instances == []
+    assert FakeLivePreview.instances == []
     assert capsys.readouterr().err.splitlines()[-1] == (
         f"{command}: error: Model not found: {model!r}. "
         "Give a model name this command knows, a local path that exists or a Hugging Face repo id (org/model)."
@@ -316,6 +325,95 @@ def test_an_empty_model_name_runs_the_default_model(run_command, adapter, model)
     (fake,) = FakeZImage.instances
     assert fake.model_config is AVAILABLE_MODELS[model]
     assert fake.init_kwargs["model_path"] == ""
+
+
+@pytest.mark.parametrize("adapter", ADAPTERS)
+def test_a_name_is_left_to_mflux_when_its_path_rules_are_not_the_reviewed_ones(
+    run_command, monkeypatch, tmp_path: Path, adapter
+) -> None:
+    """Bug: the refusal runs whatever mflux's model-path rules are, so on an mflux that adds a rule (a lookup of
+    registry names, say) a --model that rule loads is refused before load. The reviewed rules refuse the same name:
+    test_a_model_mflux_cannot_resolve_is_refused_before_load."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    added = Rule(priority=5, name="registry", check="is_registry_name", action=PathAction.LOCAL)
+    monkeypatch.setattr(PathResolution, "RULES", PathResolution.RULES | {added})
+    run_command([*BASE, "--seed", "1", "--model", "flux-dev"], adapter)
+    (built,) = FakeZImage.instances
+    assert built.init_kwargs["model_path"] == "flux-dev"
+
+
+@pytest.mark.parametrize("adapter", ADAPTERS)
+@pytest.mark.parametrize("rules", [frozenset({object()}), None], ids=["rules-without-fields", "rules-not-a-set"])
+def test_a_name_is_left_to_mflux_when_its_path_rules_cannot_be_read(
+    run_command, monkeypatch, tmp_path: Path, adapter, rules
+) -> None:
+    """Bug: the rule-set comparison reads rule.priority and rule.check (or iterates RULES) unguarded, so on an mflux
+    that reshapes its rules every unknown --model ends in an AttributeError or TypeError traceback before load, not in
+    mflux's own handling of the name."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(PathResolution, "RULES", rules)
+    run_command([*BASE, "--seed", "1", "--model", "flux-dev"], adapter)
+    (built,) = FakeZImage.instances
+    assert built.init_kwargs["model_path"] == "flux-dev"
+
+
+def test_mflux_still_leaves_a_replayed_sidecar_open(monkeypatch, tmp_path: Path) -> None:
+    """Bug: mflux closes the -C file now, and SIDECAR_LEFT_OPEN_BY_MFLUX stays on these tests, where it would hide a
+    sidecar this package itself leaves open. Red here means: delete the filter (tests/_marks.py) and its uses."""
+    sidecar = tmp_path / "replay.metadata.json"
+    sidecar.write_text(json.dumps({"model": "Tongyi-MAI/Z-Image", "prompt": "p", "seed": 3, "steps": 5}))
+    monkeypatch.setattr(sys, "argv", ["mflux-generate-z-image", "-C", str(sidecar)])
+    with pytest.warns(ResourceWarning) as caught:
+        z_image_generate.build_parser().parse_args()
+        gc.collect()
+    assert [str(w.message) for w in caught if re.match(SIDECAR_LEFT_OPEN_MESSAGE, str(w.message))] != []
+
+
+# Each command with the repo id its own sidecars record as "model".
+SIDECAR_MODELS = [
+    pytest.param(z_image.ADAPTER, "mflux-generate-z-image-taef", "Tongyi-MAI/Z-Image", id="base"),
+    pytest.param(z_image_turbo.ADAPTER, "mflux-generate-z-image-turbo-taef", "Tongyi-MAI/Z-Image-Turbo", id="turbo"),
+]
+
+
+def gone_sidecar(tmp_path: Path, model: str) -> Path:
+    """A -C sidecar from a run on a local folder, ./gone, that no longer exists."""
+    sidecar = tmp_path / "gone.metadata.json"
+    sidecar.write_text(json.dumps({"model": model, "model_path": "./gone", "prompt": "p", "seed": 3, "steps": 5}))
+    return sidecar
+
+
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+@pytest.mark.parametrize(("adapter", "command", "model"), SIDECAR_MODELS)
+def test_a_model_path_restored_from_a_sidecar_is_named_as_coming_from_it(
+    run_command, capsys, tmp_path: Path, adapter, command, model
+) -> None:
+    """Bug: the refusal of a missing path never says the path came from the -C file, so the user looks for a --model
+    they never typed."""
+    sidecar = gone_sidecar(tmp_path, model)
+    with pytest.raises(SystemExit) as exit_info:
+        run_command(["-C", str(sidecar)], adapter)
+    assert exit_info.value.code == 2
+    assert FakeZImage.instances == []
+    assert FakeLivePreview.instances == []
+    assert capsys.readouterr().err.splitlines()[-2:] == [
+        f"{command}: error: Model not found: './gone'. "
+        "Give a model name this command knows, a local path that exists or a Hugging Face repo id (org/model).",
+        f"Tip: that path came from {sidecar}. Pass --model PATH to use your own copy.",
+    ]
+
+
+@SIDECAR_LEFT_OPEN_BY_MFLUX
+@pytest.mark.parametrize("typed", [["--model", "./gone"], ["-m", "./gone"], ["--model=./gone"], ["-m./gone"]])
+def test_a_typed_model_path_is_not_named_as_coming_from_the_sidecar(run_command, capsys, tmp_path, typed) -> None:
+    """Bug: the tip checks only that -C was given, so a --model (or -m) typed next to it is said to come from the -C
+    file."""
+    with pytest.raises(SystemExit) as exit_info:
+        run_command(["-C", str(gone_sidecar(tmp_path, "Tongyi-MAI/Z-Image")), *typed])
+    assert exit_info.value.code == 2
+    err = capsys.readouterr().err
+    assert "Model not found: './gone'." in err
+    assert "Tip:" not in err
 
 
 # The library wiring: the preview callback is built before load, registered ahead of mflux's callbacks and pointed at
@@ -447,10 +545,16 @@ def test_start_line_comes_before_each_generation(run_command, monkeypatch, capsy
         pytest.param(
             ["--seed", "1", "2", "--taef-frames", "--taef-preview", "live.png"],
             [
-                "TAEF preview frames: live_seed_1_stepNN.png next to live_seed_1.png, every step (zimage decoder)",
-                "TAEF preview frames: live_seed_2_stepNN.png next to live_seed_2.png, every step (zimage decoder)",
+                "TAEF preview frames: live_seed_1_stepNN.png, every step (zimage decoder)",
+                "TAEF preview frames: live_seed_2_stepNN.png, every step (zimage decoder)",
             ],
             id="frames",
+        ),
+        # The line names the folder the frames go to, and no file frames mode never writes.
+        pytest.param(
+            ["--seed", "1", "--taef-frames", "--taef-preview", "shots/live.png"],
+            ["TAEF preview frames: shots/live_stepNN.png, every step (zimage decoder)"],
+            id="frames-in-a-folder",
         ),
         pytest.param(
             ["--seed", "1", "--taef-every", "3"],

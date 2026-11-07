@@ -11,6 +11,7 @@ import huggingface_hub.constants
 import mlx_taef.download
 import pytest
 from conftest import FAKES, REAL_PIPELINES
+from mlx_taef.integrations.mflux import LivePreviewCallback
 from mlx_taef.kernels import get_kernel
 
 try:
@@ -75,6 +76,56 @@ def test_mlx_taef_cannot_download_or_read_the_users_cache(tmp_path: Path) -> Non
         mlx_taef.download.get_or_convert(get_kernel("zimage"))
 
 
+def test_the_real_preview_callback_cannot_build_its_decoder() -> None:
+    """Bug: the guard patches a name the production path does not call (mlx-taef's constructor reaches the download
+    through another reference), so a test that builds the real LivePreviewCallback downloads TAEF1 or reads the
+    user's converted decoder."""
+    with pytest.raises(AssertionError, match="reached mlx-taef's download"):
+        LivePreviewCallback(variant="zimage")
+
+
 def test_each_test_runs_in_its_own_directory(tmp_path: Path) -> None:
     """Bug: the working directory is not isolated, so a run without --output writes image.png into the repository."""
     assert Path.cwd().resolve() == tmp_path.resolve()
+
+
+# Two tests run in a child pytest with conftest as a plugin: the first raises MLX's cache limit as --low-ram's
+# MemorySaver does, the second checks it is back.
+CACHE_LIMIT_TESTS = """
+import mlx.core as mx
+
+
+def limit():
+    previous = mx.set_cache_limit(0)
+    mx.set_cache_limit(previous)
+    return previous
+
+
+START = limit()
+
+
+def test_a_raises_the_cache_limit():
+    mx.set_cache_limit(START + 12345)
+
+
+def test_b_sees_the_limit_restored():
+    assert limit() == START
+"""
+
+
+def test_a_cache_limit_set_by_one_test_is_restored_for_the_next(tmp_path: Path) -> None:
+    """Bug: the cache-limit restore is a fixture a test must ask for, so a --low-ram test that forgets it leaves
+    MemorySaver's 1 GB cache limit on MLX for every test after it."""
+    (tmp_path / "test_cache_limit.py").write_text(CACHE_LIMIT_TESTS)
+    env = {**os.environ, "PYTHONPATH": str(TESTS)}
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "conftest", "-p", "no:cacheprovider", "--rootdir", str(tmp_path)],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "2 passed" in result.stdout

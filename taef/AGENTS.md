@@ -52,6 +52,7 @@ src/mflux/extras/taef/
 tests/
   _fakes.py         # FakeZImage, LoopingFakeZImage, FakeLivePreview
   _fingerprint.py   # AST fingerprints for the drift test
+  _marks.py         # the warning filter for a `-C` file mflux leaves open
   test_*.py
 ```
 
@@ -64,15 +65,30 @@ exit 2), when it finds:
 - `--taef-every` below 1;
 - `--taef-every` together with `--taef-frames`;
 - a preview suffix outside `.png`, `.jpg`, `.jpeg`, `.webp`;
-- a `--taef-preview` with a brace field other than `{seed}`, or a `{seed}` field that can't format a seed;
-- a preview path that is the same file as that seed's `--output`, compared case-folded because a default APFS volume is
-  case-insensitive. Without the check the last preview holds the name and mflux's save, which never overwrites, writes
-  the final image as `name_1.png`.
+- a `--taef-preview` with a brace field other than `{seed}`, or a `{seed}` field with a conversion or a spec other than
+  a width of one to three digits (padded with spaces, or with zeros when it starts with 0) optionally followed by `d`
+  (`{seed:04d}` and `{seed:3}` pass; `{seed:d}` and `{seed:0004}` don't); these carry the plain-command hint;
+- a preview file name over 255 bytes (`NAME_MAX_BYTES`), checked for each seed's path; in frames mode the last step's
+  frame name is measured. No plain-command hint;
+- a preview path that is an existing directory or a symbolic link, checked for each seed's path with no plain-command
+  hint; in frames mode also an existing directory or symbolic link at a `<preview stem>_step<digits><suffix>` name in
+  the preview's folder, matched case-folded, with no hint;
+- a preview path that is the same file as any seed's `--output`, compared case-folded because a default APFS volume is
+  case-insensitive (with `{seed}`, seed 2's preview can be seed 12's output). In frames mode the preview path itself
+  is never written, so `--output` is compared with the `<preview stem>_step<digits><suffix>` names in the preview's
+  folder. Without the check the last preview holds the name and mflux's save, which never overwrites, writes the final
+  image as `name_1.png`.
 
 Then it runs mflux's `validate` (`ModelConfigError` becomes exit 2), refuses a `--model` that is no known name, no
-existing path and not `org/model` in shape, and asks mlx-taef for the decoder variant (`UnsupportedMfluxModelError`
-becomes exit 2; no PR 1 command reaches it, it is a guard). The adapter's `after_checks` hook (`warn_before_load`)
-then prints mflux's own pre-load warnings, so a refused run prints one message.
+existing path and not `org/model` in shape (`_refuse_unknown_model`), and asks mlx-taef for the decoder variant
+(`UnsupportedMfluxModelError` becomes exit 2; no command in this package reaches it today; it guards future
+commands). The adapter's `after_checks` hook (`warn_before_load`) then prints mflux's own pre-load warnings, so a
+refused run prints one message.
+
+The unknown-model refusal applies only while mflux's path rules (`PathResolution.RULES`) equal
+`REVIEWED_PATH_RULES`; with any other rules, or if they can't be read, the name is left to mflux's load. When the
+missing path was restored by `-C` and neither `--model` nor `-m` was typed, the message adds mflux's own tip: `Tip:
+that path came from <file>. Pass --model PATH to use your own copy.`
 
 Then it builds `LivePreviewCallback` before the model loads, because the decoder is downloaded and converted on first
 use and a failure should cost seconds, not a model load. Any exception there prints
@@ -112,7 +128,7 @@ half: it installs mlx-taef from its `main` branch and runs this package's tests.
   `ZImage.generate_image` calls `ctx.in_loop(t, latents)` before `mx.eval(latents)`. The preview decodes the latent, and
   nothing here may keep it across steps.
 - The preview callback is registered before mflux's own callbacks, so it runs ahead of them in every hook.
-- This package does not touch the prediction step, so it doesn't need the eager-factory rule that mlx-teacache follows.
+- This package does not touch the prediction step, so it has no prediction-time state to build ahead of the step.
 
 ## When the drift test fails
 
@@ -120,7 +136,10 @@ half: it installs mlx-taef from its `main` branch and runs this package's tests.
 `load()` and the class it returns, and the step signatures; the parser's option strings and dests; and the statements
 the adapter copies from `main()`. Once for both commands it pins `ZImage.generate_image` (where `in_loop` sits before
 `mx.eval`), `ZImage._predict`, the Apple Silicon chip check, and the seams the preview depends on:
-`GenerationContext.in_loop`, `CallbackRegistry.register` and `CallbackManager.register_callbacks`. Each pinned value is
+`GenerationContext.in_loop`, `CallbackRegistry.register` and `CallbackManager.register_callbacks`. It also pins
+mflux's path-resolution rules (`PathResolution.RULES`) and the two functions that act on them (`PathResolution._check`
+and `_execute`), and an offline test checks that the unknown-model refusal and mflux's path resolution agree on which
+names are unresolvable. Each pinned value is
 recorded under a label that names the mflux source it was reviewed against. This package has one label, `mflux v.0.24.0
 released`, with the versions that source reports (`REPORTED_VERSIONS`). A value the label doesn't hold fails, and so
 does an installed mflux whose version the label doesn't list. A new mflux option that starts with `--taef-` would
@@ -157,6 +176,11 @@ When an mflux update turns it red:
   (`FakeLivePreview`) only; everything else is real mflux code. `tests/test_real_taef.py` runs the real
   `LivePreviewCallback` with a decoder of random weights it builds itself, through mflux's real callback dispatcher on
   a fake model that runs mflux's denoising loop, so it covers the seams without a download.
+- Shipped code uses no private mflux name. `tests/test_mflux_drift.py` scans `src/` for one (a name starting with `_`
+  reached through an mflux import, an instance, a call chain, `getattr`, or a private mflux module path) and checks
+  that the scan sees each of those shapes and finds the package's files.
+- mflux leaves a `-C` file open, so a test that replays one raises a ResourceWarning under the warnings-as-errors
+  setting. `tests/_marks.py` filters that warning, and a test in `tests/test_run.py` fails once mflux closes the file.
 - Each test's docstring starts with `Bug:` and names the one-line bug that turns it red.
 - Warnings are errors in the test run. Expect a warning with `pytest.warns`, or assert there is none with
   `warnings.catch_warnings()` plus `warnings.simplefilter("error")`. Never add a blanket ignore.
