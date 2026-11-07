@@ -39,3 +39,11 @@ This product includes software derived from mflux
   src/mflux/extras/teacache/z_image.py (warn_ineffective_options) copies a
   block of statements from main() in mflux's
   src/mflux/models/z_image/cli/z_image_generate.py.
+
+  src/mflux/extras/teacache/_core.py (_is_hf_format) copies the
+  PathResolution._is_hf_format check from mflux's
+  src/mflux/models/common/resolution/path_resolution.py.
+
+  src/mflux/extras/teacache/_core.py (_option_was_provided) copies the
+  CommandLineParser._option_was_provided argv scan from mflux's
+  src/mflux/cli/parser/parsers.py.

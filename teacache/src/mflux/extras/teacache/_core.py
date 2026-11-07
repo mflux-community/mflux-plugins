@@ -161,17 +161,71 @@ def _checked_threshold(parser: CommandLineParser, adapter: Adapter, value: float
     return value
 
 
+# Copied from mflux's PathResolution._is_hf_format (src/mflux/models/common/resolution/path_resolution.py), the check
+# its model-path rules use for a Hugging Face repo id. A copy, so a rename of that private method in a newer mflux
+# can't break the refusal below; tests/test_mflux_drift.py fails when the two stop matching.
+def _is_hf_format(path: str | None) -> bool:
+    return path is not None and "/" in path and path.count("/") == 1 and not path.startswith(("./", "../", "~/"))
+
+
+# Copied from mflux's CommandLineParser._option_was_provided (src/mflux/cli/parser/parsers.py), the argv scan its
+# commands use to tell whether an option was typed. A copy, so a rename of that private method in a newer mflux can't
+# break the Z-Image command's pre-load warning; tests/test_mflux_drift.py fails when the two stop matching.
+def _option_was_provided(*option_names: str) -> bool:
+    argv = sys.argv[1:]
+    for token in argv:
+        if token in option_names:
+            return True
+        for option in option_names:
+            if option.startswith("--") and token.startswith(f"{option}="):
+                return True
+            if (
+                option.startswith("-")
+                and not option.startswith("--")
+                and len(option) == 2
+                and token.startswith(option)
+                and token != option
+            ):
+                return True
+    return False
+
+
+# mflux 0.24.0's model-path rules (PathResolution.RULES), as (priority, check). The refusal below copies what they
+# decide, so it applies only while mflux runs these rules; any other set leaves every name to mflux's load().
+REVIEWED_PATH_RULES = frozenset(
+    {(0, "is_none"), (1, "exists_locally"), (2, "is_hf_cached"), (3, "is_hf_format"), (4, "always")}
+)
+
+
+def _path_rules_are_reviewed() -> bool:
+    """False for any rule set but the reviewed one, and for rules this code can't read (a reshaped Rule in a newer
+    mflux): either way the name is left to mflux."""
+    try:
+        return {(rule.priority, rule.check) for rule in PathResolution.RULES} == REVIEWED_PATH_RULES
+    except (AttributeError, TypeError):
+        return False
+
+
 def _refuse_unknown_model(parser: CommandLineParser, adapter: Adapter, args: Namespace) -> None:
-    """mflux's validate gives any --model outside its registry the default entry; its PathResolution then raises
+    """mflux's validate gives any --model outside its registry the default entry; its model-path rules then raise
     FileNotFoundError inside load() on a name that is no path that exists and not org/model in shape. Refuse those
-    names here. An org/model name is left to load(): only a download can tell whether that repo exists."""
+    names here, while mflux's rules are the reviewed ones. An org/model name is left to load(): only a download can
+    tell whether that repo exists. An empty --model is no path at all: mflux's loader runs the command's default model
+    for it."""
     model_path = getattr(args, "model_path", None)
-    if model_path is None or PathResolution._is_hf_format(model_path) or os.path.exists(os.path.expanduser(model_path)):
+    if not model_path or _is_hf_format(model_path) or os.path.exists(os.path.expanduser(model_path)):
+        return
+    if not _path_rules_are_reviewed():
         return
     names = ", ".join(supported_model_names(adapter)) or "none"
+    # mflux's own tip for an init image a -C file restored (CommandLineParser.parse_args), for the model it restored.
+    sidecar = getattr(args, "config_from_metadata", None)
+    tip = ""
+    if sidecar and not _option_was_provided("--model", "-m"):
+        tip = f"\nTip: that path came from {sidecar}. Pass --model PATH to use your own copy."
     parser.error(
         f"Model not found: {model_path!r}. Supported on this command: {names}. "
-        "For other weights, give a local path that exists or a Hugging Face repo id (org/model)."
+        f"For other weights, give a local path that exists or a Hugging Face repo id (org/model).{tip}"
     )
 
 
@@ -235,7 +289,7 @@ def _warn_unverified_checkpoint(
         return
     # Hub repo ids are case-insensitive, and so is mlx-teacache's own comparison.
     known = {model_config.model_name.casefold(), *(repo.casefold() for repo in adapter.calibrated_copies)}
-    if model_path is None or model_path.casefold() in known:
+    if not model_path or model_path.casefold() in known:  # "" runs the default model, as no --model does
         return
     warnings.warn(
         TeaCacheUncalibratedCheckpointWarning(

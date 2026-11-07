@@ -4,13 +4,14 @@ All notable changes to mflux-teacache are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.3.0] - 2026-11-05
+## [0.3.0] - 2026-11-06
 
 ### Added
 
 - Each image also records `teacache_decision_rule_revision` (the revision of mlx-teacache's skip rule) and
-  `teacache_mflux_version` (the mflux version). The second is left out when mflux's package metadata is missing, as
-  in a source checkout on the path; mflux's own `mflux_version` key can still be there in that case.
+  `teacache_mflux_version` (the installed mflux package version). The second is left out when mflux's package
+  metadata is missing, as in a source checkout on the path; mflux's own `mflux_version` key can still be there in
+  that case.
 
 ### Changed
 
@@ -19,13 +20,15 @@ All notable changes to mflux-teacache are listed here. The format follows
   runs and prints a warning, and TeaCache still applies.
 - mlx-teacache 0.16.0 lists mflux 0.24.0 as checked, so the warning about an untested mflux no longer appears on
   mflux 0.24.0.
-- The Qwen-Image run on real weights on mflux 0.24.0 was measured with mlx-teacache 0.14.0 and has not been repeated
-  on 0.16.0.
+- The Qwen-Image runs on real weights on mflux 0.24.0 were measured with mlx-teacache 0.14.0 and have not been
+  repeated on 0.16.0.
 
 ### Fixed
 
 - An unknown `--model` that is no existing path and not in `org/model` shape, such as `flux-dev`, is refused with
-  exit code 2 before anything loads. It used to end in a traceback. The message lists the supported names.
+  exit code 2 before anything loads. It used to end in a traceback. The message lists the supported names, and names
+  the `-C` file when the path came from one. On an mflux with different name rules, mflux decides.
+- An empty `--model` runs the command's default model, as mflux does.
 - On the Qwen-Image command, that list names all four Qwen-Image names: `qwen-image`, `qwen`, `qwen-image-2512` and
   `qwen-2512`. It used to name two.
 

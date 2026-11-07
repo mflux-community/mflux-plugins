@@ -61,7 +61,9 @@ tests/
 
 - a threshold outside (0, 1];
 - a `--model` name that is no existing path and not `org/model` in shape (`_refuse_unknown_model`; mflux would fail
-  on it at load with a traceback). The message lists `supported_model_names`;
+  on it at load with a traceback). The message lists `supported_model_names`. The refusal applies only while mflux's
+  path rules (`PathResolution.RULES`) equal `REVIEWED_PATH_RULES`; with any other rules, or if they can't be read,
+  the name is left to mflux's load;
 - a model that mlx-teacache's `match_variant` doesn't accept;
 - a distilled model;
 - a step-cache setting;
@@ -105,16 +107,15 @@ card declares `Qwen/Qwen-Image-2512` as `base_model`, and put copies of the orig
 `ZImage.generate_image` by AST digest, and the parts of mflux's Qwen-Image command the plugin calls or wraps
 (`qwen_image_generate.py` and `QwenImage.generate_image`). It also pins the parser's option strings and dests, the
 part of `main()` after `load()` (one row per adapter) and the step signatures, and it checks that the copied block still matches `main()`.
-Each pinned value is recorded under a label that names the mflux source it was reviewed against: the releases the
-package supports, and the mflux `main` commit that was last reviewed. Each label also lists the versions that source
-reports (`REPORTED_VERSIONS`). A value no label holds fails. So does a mix of values from different labels, and so
-does an installed mflux whose version the matched label does not list (a new release that ships the reviewed `main`
-code, for example).
+It also pins mflux's path-resolution rules (`PATH_RESOLUTION_RULES`). Two functions are copied from mflux, not
+imported: `_is_hf_format` (from `PathResolution`) and `_option_was_provided` (from `CommandLineParser`). Both are
+listed in `NOTICE`, and drift tests check that each copy still equals mflux's.
+Each pinned value is recorded under a label that names the mflux release it was reviewed against. Each label also
+lists the versions that release reports (`REPORTED_VERSIONS`). A value no label holds fails. So does a mix of values
+from different labels, and so does an installed mflux whose version the matched label does not list.
 
-A part with no value under a label leaves that label open for the one-source check, so a command added after the
-last `main` review does not rule `main` out. The version check is strict, though: it reads only the values that are
-recorded, so every part needs a value under a release's label. A release label that lacks one entry (a Qwen-Image
-part left out of the 0.24.0 review, say) fails the test.
+The version check is strict: it reads only the values that are recorded, so every part needs a value under a
+release's label. A label that lacks one entry (a Qwen-Image part left out of the 0.24.0 review, say) fails the test.
 
 When an mflux update turns it red:
 
@@ -125,10 +126,9 @@ When an mflux update turns it red:
    something only the newer mflux has must still import and run on the oldest supported release.
 3. If `ZImage.generate_image` changed, bring `FakeZImage.generate_image` in `tests/_fakes.py` in line with it. If
    `QwenImage.generate_image` changed, do the same for `FakeQwenImage`.
-4. Record the values the failure messages print under a label naming the mflux source you reviewed: the release
-   (`mflux v.0.24.0 released`), or the `main` commit and the review date (`mflux main <commit>, reviewed <date>`),
-   with the versions that source reports. A newer `main` commit replaces the older `main` label; a release keeps its
-   label while the package supports it. Never record a value without step 1.
+4. Record the values the failure messages print under a label naming the mflux release you reviewed
+   (`mflux v.0.24.0 released`), with the versions that release reports. A release keeps its label while the package
+   supports it. Never record a value without step 1.
 
 ## Tests
 
@@ -149,9 +149,10 @@ When an mflux update turns it red:
   load. The Qwen tests there also check that both classifier-free guidance branches follow one skip decision, and that
   `--low-ram` and `--pid-decode` release the transformer before the decode. `FakeTeaCache`
   builds its handle with `mlx_teacache.testing.fake_handle` and commits a generation through
-  `TeaCacheStats.record` and `finalize_last_generation`. The one private mlx-teacache name left is
-  `_mflux_versions.installed_mflux_version`, which `test_real_teacache.py` patches to simulate a newer mflux. If an
-  mlx-teacache release changes these, fix the fake, not the plugin.
+  `TeaCacheStats.record` and `finalize_last_generation`. Shipped code uses no private mflux name. The tests use two
+  private mlx-teacache names, the `_mflux_versions` module and its `installed_mflux_version`, which
+  `test_real_teacache.py` patches to simulate a newer mflux. If an mlx-teacache release changes these, fix the fake,
+  not the plugin.
 - Each test's docstring starts with `Bug:` and names the one-line bug that turns it red.
 - Warnings are errors in the test run, with one exception: mlx-teacache's `TeaCacheUntestedMfluxWarning` is shown, not
   raised (`filterwarnings` in `pyproject.toml`), so a run on an mflux newer than mlx-teacache has checked still

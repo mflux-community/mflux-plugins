@@ -71,7 +71,8 @@ It adds only the optional hooks its command needs:
 
 `run` also refuses a `--model` name that is no existing path and not `org/model` in shape (`_refuse_unknown_model`,
 exit 2), because mflux would fail on it at load with a traceback. A local path that exists and any `org/model` name
-still run.
+still run. The refusal applies only while mflux's path rules (`PathResolution.RULES`) equal `REVIEWED_PATH_RULES`;
+with any other rules, or if they can't be read, the name is left to mflux's load.
 
 The Z-Image adapter's `after_checks` hook (`warn_before_load`) calls mflux's tiling warning,
 then `warn_ineffective_options`, which copies a block of statements from mflux's `main()`, because mflux has no
@@ -115,13 +116,14 @@ that copies more adds its file there.
 `tests/test_mflux_drift.py` pins mflux's Z-Image `build_parser()`, `main()`, `ZImageCommand.load`,
 `ZImage.generate_image`, `ZImage._predict` and `AppleSiliconUtil.is_m1_or_m2` by AST digest. It also pins the
 parser's option strings and dests, the part of `main()` after `load()` and the step signatures, and it checks that
-the copied block still matches `main()`. Each pinned value is recorded under a label that names the mflux source it
-was reviewed against: the releases the package supports, and the mflux `main` commit that was last reviewed. Each
-label also lists the versions that source reports (`REPORTED_VERSIONS`). A value no label holds fails. So does a mix
-of values from different labels, and so does an installed mflux whose version the matched label does not list (a
-new release that ships the reviewed `main` code, for example). A part with no value under a label leaves that label
-open for the one-source check, so a command added after the last `main` review does not rule `main` out. The version
-check is strict: it reads only recorded values, so a release label that lacks an entry for a part fails the test.
+the copied block still matches `main()`. It pins mflux's path-resolution rules (`PATH_RESOLUTION_RULES`) too. Two
+functions are copied from mflux, not imported: `_is_hf_format` (from `PathResolution`) and `_option_was_provided`
+(from `CommandLineParser`). Both are listed in `NOTICE`, and drift tests check that each copy still equals mflux's.
+Shipped code uses no private mflux name. Each pinned value is recorded under a label that names the mflux release it
+was reviewed against. Each label also lists the versions that release reports (`REPORTED_VERSIONS`). A value no
+label holds fails. So does a mix of values from different labels, and so does an installed mflux whose version the
+matched label does not list. The version check is strict: it reads only recorded values, so a label that lacks an
+entry for a part fails the test.
 When an mflux update turns it red:
 
 1. Read mflux's diff of `src/mflux/models/z_image/cli/z_image_generate.py`.
@@ -129,10 +131,9 @@ When an mflux update turns it red:
    that changes what the plugin must refuse needs a refusal and an entry in the refusal tests. Code that uses
    something only the newer mflux has must still import and run on the oldest supported release.
 3. If `ZImage.generate_image` changed, bring `FakeZImage.generate_image` in `tests/_fakes.py` in line with it.
-4. Record the values the failure messages print under a label naming the mflux source you reviewed: the release
-   (`mflux v.0.24.0 released`), or the `main` commit and the review date (`mflux main <commit>, reviewed <date>`),
-   with the versions that source reports. A newer `main` commit replaces the older `main` label; a release keeps its
-   label while the package supports it. Never record a value without step 1.
+4. Record the values the failure messages print under a label naming the mflux release you reviewed
+   (`mflux v.0.24.0 released`), with the versions that release reports. A release keeps its label while the package
+   supports it. Never record a value without step 1.
 
 ## Tests
 
