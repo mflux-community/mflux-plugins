@@ -34,7 +34,8 @@ class FakeZImage:
     mflux's ZImage.generate_image does (guidance forced to 0.0 on a model without guidance, the scheduler
     default resolved, a real Config, the real ImageUtil.to_image with the same keywords), so a save
     writes a real PNG and a real JSON sidecar with the fields mflux writes: steps, guidance, image_path,
-    image_strength, pid_*, and float32 / compute_precision / vae_full_precision in generation_parameters.
+    image_strength, pid_*, and float32 / compute_precision / vae_full_precision (and, on mflux main e9a5fd7,
+    small_text_encoder) in generation_parameters.
 
     Two fields are simpler than the real ones, safe because no test here reads them back:
     lora_paths / lora_scales are the values passed to __init__ (the real LoRALoader resolves
@@ -53,6 +54,8 @@ class FakeZImage:
         self.init_kwargs = kwargs
         self.model_config = bound.arguments["model_config"]
         self.float32 = bound.arguments["float32"]
+        # ZImage.__init__ takes small_text_encoder from mflux main e9a5fd7 on; mflux 0.24.0 has no such keyword.
+        self.small_text_encoder = bound.arguments.get("small_text_encoder", False)
         self.compute_precision = ComputePrecision(bound.arguments["compute_precision"])
         # The real ZImageInitializer sets these from the loaded weights and LoRALoader; see the class docstring.
         self.bits = bound.arguments["quantize"]
@@ -110,6 +113,8 @@ class FakeZImage:
                 **({"float32": True} if self.float32 else {}),
                 **self.compute_precision.generation_parameters(),
                 **VAEDecodeOptions.generation_parameters(self),
+                # From mflux main e9a5fd7 on, ZImage._generation_parameters() adds this key; 0.24.0 never sets it.
+                **({"small_text_encoder": True} if self.small_text_encoder else {}),
             },
         )
         self.returned_parameters.append(image.generation_parameters)
