@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 from _fakes import FakeZImage
-from _fingerprint import ast_fingerprint, function_body_dumps, statements_fingerprint_from
+from _fingerprint import ast_fingerprint, function_body_dumps, parser_fingerprint, statements_fingerprint_from
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.resolution.path_resolution import PathResolution
@@ -35,27 +35,29 @@ from mflux.extras.myplugin import _core, z_image
 # reviewed on 2026-10-28 on CPython 3.13. CI checks every digest on CPython 3.11 and 3.13.
 RELEASED_0_24 = "mflux v.0.24.0 released"
 # mflux main has moved past 0.24.0, and the template's mflux-main CI job checks main, so main needs a label of its
-# own. Reviewed: e9a5fd7 (Z-Image Turbo's --small-text-encoder), where the only pinned part that moved is
-# ZImage.generate_image: it now builds generation_parameters through ZImage._generation_parameters(), which adds
-# "small_text_encoder": True when the model was built with the flag; ZImageCommand.load never passes it, and
-# ZImage._predict and the chip check are unchanged. When an mflux release carries this change, that release gets its
-# own label, and this one may then be dropped.
-MAIN_E9A5FD7 = "mflux main e9a5fd7, unreleased, reviewed 2026-11-07"
+# own. Reviewed: 17b47e9, where the only pinned part that moved since 0.24.0 is ZImage.generate_image: it now builds
+# generation_parameters through ZImage._generation_parameters(), which adds "small_text_encoder": True when the model
+# was built with Z-Image Turbo's --small-text-encoder; ZImageCommand.load never passes it, and ZImage._predict and the
+# chip check are unchanged. When an mflux release carries this change, that release gets its own label, and this one
+# may then be dropped.
+MAIN_17B47E9 = "mflux main 17b47e9, unreleased, reviewed 2026-11-08"
 # The versions each reviewed source reports.
-REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_E9A5FD7: ("0.24.0",)}
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",)}
 
-BUILD_PARSER_DIGESTS = {RELEASED_0_24: "6a85a43cc52fd44f", MAIN_E9A5FD7: "6a85a43cc52fd44f"}
-MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_E9A5FD7: "1f3058eda927d0fe"}
+# The build_parser digest is a parser_fingerprint value: it reads the options and helper calls, not the wording of
+# help, help_text, description or epilog, so a reworded --help line moves no pin. Every other digest is ast_fingerprint.
+BUILD_PARSER_DIGESTS = {RELEASED_0_24: "dd5d356295c7d1b3", MAIN_17B47E9: "dd5d356295c7d1b3"}
+MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe"}
 # ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
 # model) and returns the model.
-LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_E9A5FD7: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_E9A5FD7: "061ebd266b779369"}
+GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_17B47E9: "061ebd266b779369"}
 # ZImage._predict, the factory a plugin replaces to keep per-step state, and the chip check that decides whether mflux
 # compiles the step it returns. AGENTS.md's "Compile and memory" section describes both.
 PREDICT_DIGESTS = {
     RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
-    MAIN_E9A5FD7: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
+    MAIN_17B47E9: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
 }
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
@@ -78,7 +80,7 @@ DESTS = (
     "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
     "width",
 )  # fmt: skip
-OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_E9A5FD7: (OPTION_STRINGS, DESTS)}
+OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_17B47E9: (OPTION_STRINGS, DESTS)}
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
 # from there on (load, callback registration, the per-seed generate/save loop, the except/finally). _core.run mirrors
@@ -87,7 +89,7 @@ POST_LOAD = {
     "mflux-generate-z-image-myplugin": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_E9A5FD7: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee"},
     ),
 }
 
@@ -102,7 +104,7 @@ PATH_RESOLUTION_RULES = {
         (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
         (4, "error", "always", "Path not found"),
     ],
-    MAIN_E9A5FD7: [
+    MAIN_17B47E9: [
         (0, "none", "is_none", "Use local filesystem path"),
         (1, "local", "exists_locally", "Use local filesystem path"),
         (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
@@ -112,8 +114,8 @@ PATH_RESOLUTION_RULES = {
 }
 # PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
 # names the rules, not what they do; these two pin that.
-PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_E9A5FD7: "b0f9ed4e22018374"}
-PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_E9A5FD7: "c7fd6091bc7ea323"}
+PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_17B47E9: "b0f9ed4e22018374"}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_17B47E9: "c7fd6091bc7ea323"}
 
 REVIEW_FIRST = (
     "review the mflux change first (AGENTS.md, 'When the drift test fails'), then record this value under a label "
@@ -345,7 +347,7 @@ def test_shipped_code_uses_no_private_mflux_name() -> None:
 def test_mflux_build_parser_is_a_reviewed_one() -> None:
     """Bug: mflux's Z-Image parser gains or drops an option (a step-cache flag, say) and the plugin
     keeps passing through a parser nobody checked against its refusals."""
-    actual = ast_fingerprint(z_image_generate.build_parser)
+    actual = parser_fingerprint(z_image_generate.build_parser)
     assert reviewed_sources(BUILD_PARSER_DIGESTS, actual), (
         f"z_image_generate.build_parser changed: {REVIEW_FIRST} {actual}"
     )
@@ -434,7 +436,7 @@ def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
         return sources_not_ruled_out(accepted, actual, labels)
 
     return {
-        "build_parser": possible(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
+        "build_parser": possible(BUILD_PARSER_DIGESTS, parser_fingerprint(z_image_generate.build_parser)),
         "options": possible(OPTIONS, parser_options()),
         "main": possible(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
         "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),

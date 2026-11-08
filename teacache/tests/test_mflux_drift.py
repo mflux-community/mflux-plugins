@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 from _fakes import FakeZImage
-from _fingerprint import ast_fingerprint, function_body_dumps, statements_fingerprint_from
+from _fingerprint import ast_fingerprint, function_body_dumps, parser_fingerprint, statements_fingerprint_from
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.resolution.path_resolution import PathResolution
@@ -39,21 +39,23 @@ from mflux.extras.teacache import _core, qwen_image, z_image
 # checks every digest on CPython 3.11 and 3.13.
 RELEASED_0_24 = "mflux v.0.24.0 released"
 # mflux main has moved past 0.24.0, and the mflux-main CI job checks main, so main needs a label of its own. Reviewed:
-# e9a5fd7 (Z-Image Turbo's --small-text-encoder), where the only pinned part that moved is ZImage.generate_image: it
-# now builds generation_parameters through ZImage._generation_parameters(), which adds "small_text_encoder": True
-# when the model was built with the flag; ZImageCommand.load never passes it. When an mflux release carries this
-# change, that release gets its own label, and this one may then be dropped.
-MAIN_E9A5FD7 = "mflux main e9a5fd7, unreleased, reviewed 2026-11-07"
+# 17b47e9, where the only pinned part that moved since 0.24.0 is ZImage.generate_image: it now builds
+# generation_parameters through ZImage._generation_parameters(), which adds "small_text_encoder": True when the model
+# was built with Z-Image Turbo's --small-text-encoder; ZImageCommand.load never passes it. When an mflux release
+# carries this change, that release gets its own label, and this one may then be dropped.
+MAIN_17B47E9 = "mflux main 17b47e9, unreleased, reviewed 2026-11-08"
 # The versions each reviewed source reports.
-REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_E9A5FD7: ("0.24.0",)}
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",)}
 
-BUILD_PARSER_DIGESTS = {RELEASED_0_24: "6a85a43cc52fd44f", MAIN_E9A5FD7: "6a85a43cc52fd44f"}
-MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_E9A5FD7: "1f3058eda927d0fe"}
+# The build_parser digests are parser_fingerprint values: they read the options and helper calls, not the wording of
+# help, help_text, description or epilog, so a reworded --help line moves no pin. Every other digest is ast_fingerprint.
+BUILD_PARSER_DIGESTS = {RELEASED_0_24: "dd5d356295c7d1b3", MAIN_17B47E9: "dd5d356295c7d1b3"}
+MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe"}
 # ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
 # model) and returns the model.
-LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_E9A5FD7: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_E9A5FD7: "061ebd266b779369"}
+GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_17B47E9: "061ebd266b779369"}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
@@ -75,46 +77,53 @@ DESTS = (
     "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
     "width",
 )  # fmt: skip
-OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_E9A5FD7: (OPTION_STRINGS, DESTS)}
+OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_17B47E9: (OPTION_STRINGS, DESTS)}
 
 # The Qwen-Image command's parts, reviewed on PyPI 0.24.0 (qwen_image_generate.py, variants/txt2img/qwen_image.py and
 # the parser helpers the Qwen-Image parser calls: add_lora_arguments keeps bake_by_default=True, and it does not call
 # add_cfg_end_arguments).
-QWEN_BUILD_PARSER_DIGESTS = {RELEASED_0_24: "9b3d21e5b122a1b9", MAIN_E9A5FD7: "9b3d21e5b122a1b9"}
-QWEN_MAIN_DIGESTS = {RELEASED_0_24: "74c1b41aa77a0ef0", MAIN_E9A5FD7: "74c1b41aa77a0ef0"}
-QWEN_VALIDATE_DIGESTS = {RELEASED_0_24: "7e09191dff32f856", MAIN_E9A5FD7: "7e09191dff32f856"}
-QWEN_LOAD_DIGESTS = {RELEASED_0_24: "b18636d16409e098", MAIN_E9A5FD7: "b18636d16409e098"}
-QWEN_GENERATE_DIGESTS = {RELEASED_0_24: "ee92a1a33b87793d", MAIN_E9A5FD7: "ee92a1a33b87793d"}
-QWEN_GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "9e6846e3f5ed09bb", MAIN_E9A5FD7: "9e6846e3f5ed09bb"}
-# Per pinned Qwen part: the function, its recorded values, and what to bring in line when it moves.
+QWEN_BUILD_PARSER_DIGESTS = {RELEASED_0_24: "8c29b8e9b296d0ab", MAIN_17B47E9: "8c29b8e9b296d0ab"}
+QWEN_MAIN_DIGESTS = {RELEASED_0_24: "74c1b41aa77a0ef0", MAIN_17B47E9: "74c1b41aa77a0ef0"}
+QWEN_VALIDATE_DIGESTS = {RELEASED_0_24: "7e09191dff32f856", MAIN_17B47E9: "7e09191dff32f856"}
+QWEN_LOAD_DIGESTS = {RELEASED_0_24: "b18636d16409e098", MAIN_17B47E9: "b18636d16409e098"}
+QWEN_GENERATE_DIGESTS = {RELEASED_0_24: "ee92a1a33b87793d", MAIN_17B47E9: "ee92a1a33b87793d"}
+QWEN_GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "9e6846e3f5ed09bb", MAIN_17B47E9: "9e6846e3f5ed09bb"}
+# Per pinned Qwen part: the function, the fingerprint its values are, its recorded values, and what to bring in line
+# when it moves.
 QWEN_PINS = {
     "qwen_image_generate.build_parser": (
         qwen_image_generate.build_parser,
+        parser_fingerprint,
         QWEN_BUILD_PARSER_DIGESTS,
         "qwen_image.build_parser and the refusal tests (an option that skips or caches steps needs a refusal)",
     ),
     "qwen_image_generate.main": (
         qwen_image_generate.main,
+        ast_fingerprint,
         QWEN_MAIN_DIGESTS,
         "a new pre-load step in main() needs an after_checks hook in qwen_image.py",
     ),
     "QwenImageCommand.validate": (
         QwenImageCommand.validate,
+        ast_fingerprint,
         QWEN_VALIDATE_DIGESTS,
         "qwen_image.validate, which wraps it and refuses the original checkpoint first",
     ),
     "QwenImageCommand.load": (
         QwenImageCommand.load,
+        ast_fingerprint,
         QWEN_LOAD_DIGESTS,
         "_core.run, which calls load() directly and applies TeaCache to what it returns",
     ),
     "QwenImageCommand.generate": (
         QwenImageCommand.generate,
+        ast_fingerprint,
         QWEN_GENERATE_DIGESTS,
         "_core.run, which passes it the parsed arguments and relies on it resolving --width and --height",
     ),
     "QwenImage.generate_image": (
         QwenImage.generate_image,
+        ast_fingerprint,
         QWEN_GENERATE_IMAGE_DIGESTS,
         "FakeQwenImage.generate_image and LoopingFakeQwenImage.denoise in tests/_fakes.py",
     ),
@@ -137,7 +146,7 @@ QWEN_DESTS = (
     "pid_degrade_sigma", "prompt", "prompt_file", "quantize", "scheduler", "seed", "steps",
     "stepwise_image_output_dir", "vae_tile_size", "vae_tiling", "verbose", "width",
 )  # fmt: skip
-QWEN_OPTIONS = {RELEASED_0_24: (QWEN_OPTION_STRINGS, QWEN_DESTS), MAIN_E9A5FD7: (QWEN_OPTION_STRINGS, QWEN_DESTS)}
+QWEN_OPTIONS = {RELEASED_0_24: (QWEN_OPTION_STRINGS, QWEN_DESTS), MAIN_17B47E9: (QWEN_OPTION_STRINGS, QWEN_DESTS)}
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
 # from there on (load, callback registration, the per-seed generate/save loop, the except/finally). _core.run mirrors
@@ -146,14 +155,14 @@ POST_LOAD = {
     "mflux-generate-z-image-teacache": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_E9A5FD7: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee"},
     ),
     # mflux's Qwen main() resolves the sizes into a copy of args before its seed loop; _core.run passes the parsed
     # args, which changes no output because QwenImageCommand.generate resolves them again.
     "mflux-generate-qwen-teacache": (
         qwen_image_generate.main,
         "model = QwenImageCommand.load(args)",
-        {RELEASED_0_24: "ff216a1e1a70ec70", MAIN_E9A5FD7: "ff216a1e1a70ec70"},
+        {RELEASED_0_24: "ff216a1e1a70ec70", MAIN_17B47E9: "ff216a1e1a70ec70"},
     ),
 }
 
@@ -168,7 +177,7 @@ PATH_RESOLUTION_RULES = {
         (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
         (4, "error", "always", "Path not found"),
     ],
-    MAIN_E9A5FD7: [
+    MAIN_17B47E9: [
         (0, "none", "is_none", "Use local filesystem path"),
         (1, "local", "exists_locally", "Use local filesystem path"),
         (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
@@ -178,8 +187,8 @@ PATH_RESOLUTION_RULES = {
 }
 # PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
 # names the rules, not what they do; these two pin that.
-PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_E9A5FD7: "b0f9ed4e22018374"}
-PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_E9A5FD7: "c7fd6091bc7ea323"}
+PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_17B47E9: "b0f9ed4e22018374"}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_17B47E9: "c7fd6091bc7ea323"}
 
 REVIEW_FIRST = (
     "review the mflux change first (AGENTS.md, 'When the drift test fails'), then record this value under a label "
@@ -407,7 +416,7 @@ def test_shipped_code_uses_no_private_mflux_name() -> None:
 def test_mflux_build_parser_is_a_reviewed_one() -> None:
     """Bug: mflux's Z-Image parser gains or drops an option (a step-cache flag, say) and the plugin
     keeps passing through a parser nobody checked against its refusals."""
-    actual = ast_fingerprint(z_image_generate.build_parser)
+    actual = parser_fingerprint(z_image_generate.build_parser)
     assert reviewed_sources(BUILD_PARSER_DIGESTS, actual), (
         f"z_image_generate.build_parser changed: {REVIEW_FIRST} {actual}"
     )
@@ -479,8 +488,8 @@ def test_mflux_qwen_part_is_a_reviewed_one(part: str) -> None:
     """Bug: mflux changes a part of its Qwen-Image command that the plugin calls, wraps or reproduces (a parser
     option, a pre-load step in main(), what validate accepts, what load builds, the size resolve in generate, what
     generate_image records), and the plugin keeps running it unreviewed."""
-    function, digests, review = QWEN_PINS[part]
-    actual = ast_fingerprint(function)
+    function, fingerprint, digests, review = QWEN_PINS[part]
+    actual = fingerprint(function)
     assert reviewed_sources(digests, actual), f"{part} changed: bring {review} in line; {REVIEW_FIRST} {actual}"
 
 
@@ -515,13 +524,16 @@ def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
         return sources_not_ruled_out(accepted, actual, labels)
 
     return {
-        "build_parser": possible(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
+        "build_parser": possible(BUILD_PARSER_DIGESTS, parser_fingerprint(z_image_generate.build_parser)),
         "options": possible(OPTIONS, parser_options()),
         "main": possible(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
         "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
         "generate_image": possible(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
         "qwen options": possible(QWEN_OPTIONS, parser_options(qwen_image_generate)),
-        **{part: possible(digests, ast_fingerprint(function)) for part, (function, digests, _) in QWEN_PINS.items()},
+        **{
+            part: possible(digests, fingerprint(function))
+            for part, (function, fingerprint, digests, _) in QWEN_PINS.items()
+        },
         "path resolution rules": possible(PATH_RESOLUTION_RULES, path_resolution_rules()),
         "PathResolution._check": possible(PATH_RESOLUTION_CHECK_DIGESTS, ast_fingerprint(PathResolution._check)),
         "PathResolution._execute": possible(PATH_RESOLUTION_EXECUTE_DIGESTS, ast_fingerprint(PathResolution._execute)),
