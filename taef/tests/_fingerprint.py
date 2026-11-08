@@ -13,6 +13,8 @@ from typing import Any
 _INTERPRETER_FIELDS = frozenset(
     {"lineno", "col_offset", "end_lineno", "end_col_offset", "type_comment", "type_params", "kind", "ctx"}
 )
+# The keyword arguments whose string value is wording a user reads in --help, not what the parser accepts.
+_PROSE_KEYWORDS = frozenset({"help", "help_text", "description", "epilog"})
 
 
 def _strip_docstrings(tree: ast.AST) -> ast.AST:
@@ -49,9 +51,28 @@ def _function_node(fn: Callable[..., Any]) -> ast.FunctionDef | ast.AsyncFunctio
 
 def ast_fingerprint(fn: Callable[..., Any]) -> str:
     """Short sha256 of a function's arguments and body; the name and decorators don't move it."""
-    node = _function_node(fn)
+    return _digest(_function_node(fn))
+
+
+def _digest(node: ast.FunctionDef | ast.AsyncFunctionDef) -> str:
     dumped = _normalized(node.args) + "|" + "|".join(_normalized(statement) for statement in node.body)
     return hashlib.sha256(dumped.encode()).hexdigest()[:16]
+
+
+def parser_fingerprint(fn: Callable[..., Any]) -> str:
+    """ast_fingerprint of a build_parser that ignores the text of the help, help_text, description and epilog strings
+    it passes, so a reworded --help line doesn't move it. The keywords themselves still count, and so does a help
+    value that is not a plain string (an f-string or a name can carry an option's value)."""
+    node = _function_node(fn)
+    for keyword in ast.walk(node):
+        if (
+            isinstance(keyword, ast.keyword)
+            and keyword.arg in _PROSE_KEYWORDS
+            and isinstance(keyword.value, ast.Constant)
+            and isinstance(keyword.value.value, str)
+        ):
+            keyword.value = ast.Constant(value="")
+    return _digest(node)
 
 
 def function_body_dumps(fn: Callable[..., Any]) -> list[str]:

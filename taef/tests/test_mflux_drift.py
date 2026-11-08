@@ -21,7 +21,7 @@ from typing import Any
 import mlx.core as mx
 import pytest
 from _fakes import FakeZImage
-from _fingerprint import ast_fingerprint, function_body_dumps, statements_fingerprint_from
+from _fingerprint import ast_fingerprint, function_body_dumps, parser_fingerprint, statements_fingerprint_from
 from mflux.callbacks.callback_manager import CallbackManager
 from mflux.callbacks.callback_registry import CallbackRegistry
 from mflux.callbacks.generation_context import GenerationContext
@@ -44,55 +44,61 @@ from mflux.extras.taef import _core, z_image, z_image_turbo
 # read in full), both on CPython 3.13. CI checks every digest on CPython 3.11 and 3.13.
 RELEASED_0_24 = "mflux v.0.24.0 released"
 # mflux main moved past 0.24.0, and the mflux-main CI job checks main, so main gets a label of its own. Reviewed:
-# e9a5fd7 (Z-Image Turbo gains --small-text-encoder, which ZImageTurboCommand.load passes to ZImage, and
-# ZImage.generate_image records it through _generation_parameters()), against the 0.24.0 values, on CPython 3.13.
+# 17b47e9, against the 0.24.0 values, on CPython 3.13. Since 0.24.0, Z-Image Turbo gained --small-text-encoder, which
+# ZImageTurboCommand.load passes to ZImage, and ZImage.generate_image records it through _generation_parameters().
 # When an mflux release carries this change, that release gets its own label, and this one may then be dropped.
-MAIN_E9A5FD7 = "mflux main e9a5fd7, unreleased, reviewed 2026-11-07"
+MAIN_17B47E9 = "mflux main 17b47e9, unreleased, reviewed 2026-11-08"
 # The versions each reviewed source reports. mflux main still reports 0.24.0.
-REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_E9A5FD7: ("0.24.0",)}
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",)}
 
-BUILD_PARSER_DIGESTS = {RELEASED_0_24: "6a85a43cc52fd44f", MAIN_E9A5FD7: "6a85a43cc52fd44f"}
-MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_E9A5FD7: "1f3058eda927d0fe"}
+# The build_parser digests are parser_fingerprint values: they read the options and helper calls, not the wording of
+# help, help_text, description or epilog, so a reworded --help line moves no pin. Every other digest is ast_fingerprint.
+BUILD_PARSER_DIGESTS = {RELEASED_0_24: "dd5d356295c7d1b3", MAIN_17B47E9: "dd5d356295c7d1b3"}
+MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe"}
 # ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
 # model) and returns the model.
-LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_E9A5FD7: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-# On e9a5fd7 it builds generation_parameters through ZImage._generation_parameters(), which adds
+# On mflux main it builds generation_parameters through ZImage._generation_parameters(), which adds
 # "small_text_encoder": True on a model built with the flag; nothing else in it moved.
-GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_E9A5FD7: "061ebd266b779369"}
+GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_17B47E9: "061ebd266b779369"}
 # ZImage._predict, the factory that builds the denoising step, and the chip check that decides whether mflux compiles
 # that step (mx.compile, except on M1 and M2). The preview relies on running outside it: generate_image calls the
 # in-loop callbacks after the step, on the latents it returned. A callback traced into a compiled step would write its
 # preview once, while tracing, and never again.
 PREDICT_DIGESTS = {
     RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
-    MAIN_E9A5FD7: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
+    MAIN_17B47E9: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
 }
 
 # The Z-Image Turbo command's parts. Its main() parses, warns about --vae-tiling and about the options Turbo ignores
 # (IGNORED_OPTIONS: --guidance, --negative-prompt), then loads, registers mflux's callbacks and runs the same per-seed
 # generate/save loop as the Z-Image command. It has no validate() call before load(); ZImageTurboCommand.load builds
 # the same ZImage class from ZImageTurboCommand.validate and applies VAEDecodeOptions like ZImageCommand.load.
-# On e9a5fd7 build_parser adds add_small_text_encoder_arguments (--small-text-encoder / --no-small-text-encoder), and
-# load passes small_text_encoder=args.small_text_encoder to ZImage. The option swaps the text encoder only: it skips no
-# step, and the preview decodes the in-loop latents, not the text encoder's output, so it needs no refusal.
-TURBO_BUILD_PARSER_DIGESTS = {RELEASED_0_24: "182baa57cfe30b1f", MAIN_E9A5FD7: "9657ed19a3964c9a"}
-TURBO_MAIN_DIGESTS = {RELEASED_0_24: "11546c660ef3fb41", MAIN_E9A5FD7: "11546c660ef3fb41"}
-TURBO_LOAD_DIGESTS = {RELEASED_0_24: "3441d988220ed998", MAIN_E9A5FD7: "7c89744d5b0f8ce5"}
-# Per pinned Turbo part: the function, its recorded values, and what to bring in line when it moves.
+# On mflux main build_parser adds add_small_text_encoder_arguments (--small-text-encoder / --no-small-text-encoder),
+# and load passes small_text_encoder=args.small_text_encoder to ZImage. The option swaps the text encoder only: it skips
+# no step, and the preview decodes the in-loop latents, not the text encoder's output, so it needs no refusal.
+TURBO_BUILD_PARSER_DIGESTS = {RELEASED_0_24: "6e8eafd85a439db2", MAIN_17B47E9: "d190cdfd477c548e"}
+TURBO_MAIN_DIGESTS = {RELEASED_0_24: "11546c660ef3fb41", MAIN_17B47E9: "11546c660ef3fb41"}
+TURBO_LOAD_DIGESTS = {RELEASED_0_24: "3441d988220ed998", MAIN_17B47E9: "7c89744d5b0f8ce5"}
+# Per pinned Turbo part: the function, the fingerprint its values are, its recorded values, and what to bring in line
+# when it moves.
 TURBO_PINS = {
     "z_image_turbo_generate.build_parser": (
         z_image_turbo_generate.build_parser,
+        parser_fingerprint,
         TURBO_BUILD_PARSER_DIGESTS,
         "z_image_turbo.build_parser and the refusal tests (an option that skips or caches steps needs a refusal)",
     ),
     "z_image_turbo_generate.main": (
         z_image_turbo_generate.main,
+        ast_fingerprint,
         TURBO_MAIN_DIGESTS,
         "z_image_turbo.warn_before_load, which copies main()'s pre-load statements",
     ),
     "ZImageTurboCommand.load": (
         ZImageTurboCommand.load,
+        ast_fingerprint,
         TURBO_LOAD_DIGESTS,
         "_core.run, which calls load() directly",
     ),
@@ -106,17 +112,17 @@ TURBO_PINS = {
 CALLBACK_PINS = {
     "GenerationContext.in_loop": (
         GenerationContext.in_loop,
-        {RELEASED_0_24: "22531d11c18f9662", MAIN_E9A5FD7: "22531d11c18f9662"},
+        {RELEASED_0_24: "22531d11c18f9662", MAIN_17B47E9: "22531d11c18f9662"},
         "FakeLivePreview.call_in_loop and the order tests in tests/test_run.py",
     ),
     "CallbackRegistry.register": (
         CallbackRegistry.register,
-        {RELEASED_0_24: "88aa95a1710be75f", MAIN_E9A5FD7: "88aa95a1710be75f"},
+        {RELEASED_0_24: "88aa95a1710be75f", MAIN_17B47E9: "88aa95a1710be75f"},
         "_core.run, which registers the preview on model.callbacks first",
     ),
     "CallbackManager.register_callbacks": (
         CallbackManager.register_callbacks,
-        {RELEASED_0_24: "ffeeb63f7a540385", MAIN_E9A5FD7: "ffeeb63f7a540385"},
+        {RELEASED_0_24: "ffeeb63f7a540385", MAIN_17B47E9: "ffeeb63f7a540385"},
         "_core.run, which registers the preview before this call so it runs ahead of mflux's callbacks",
     ),
 }
@@ -132,7 +138,7 @@ PATH_RESOLUTION_RULES = {
         (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
         (4, "error", "always", "Path not found"),
     ],
-    MAIN_E9A5FD7: [
+    MAIN_17B47E9: [
         (0, "none", "is_none", "Use local filesystem path"),
         (1, "local", "exists_locally", "Use local filesystem path"),
         (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
@@ -142,8 +148,8 @@ PATH_RESOLUTION_RULES = {
 }
 # PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
 # names the rules, not what they do; these two pin that.
-PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_E9A5FD7: "b0f9ed4e22018374"}
-PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_E9A5FD7: "c7fd6091bc7ea323"}
+PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_17B47E9: "b0f9ed4e22018374"}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_17B47E9: "c7fd6091bc7ea323"}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
@@ -165,11 +171,11 @@ DESTS = (
     "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
     "width",
 )  # fmt: skip
-OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_E9A5FD7: (OPTION_STRINGS, DESTS)}
+OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_17B47E9: (OPTION_STRINGS, DESTS)}
 # The Z-Image Turbo parser has the same option strings and dests in 0.24.0 (its image helpers take other arguments,
-# which its build_parser digest pins). On e9a5fd7 it has --small-text-encoder and --no-small-text-encoder on top, both
+# which its build_parser digest pins). On mflux main it has --small-text-encoder and --no-small-text-encoder on top, both
 # with the dest small_text_encoder.
-TURBO_OPTION_STRINGS_E9A5FD7 = (
+TURBO_OPTION_STRINGS_17B47E9 = (
     "--auto-seeds", "--bake-lora", "--base-model", "--battery-percentage-stop-limit", "--compute-precision",
     "--config-from-conf", "--config-from-metadata", "--float32", "--guidance", "--height", "--help", "--image",
     "--image-path", "--image-strength", "--lora", "--lora-paths", "--lora-scales", "--lora-style", "--low-ram",
@@ -180,7 +186,7 @@ TURBO_OPTION_STRINGS_E9A5FD7 = (
     "--vae-full-precision", "--vae-tile-size", "--vae-tiling", "--verbose", "--width", "-B", "-C", "-h", "-m", "-q",
     "-v",
 )  # fmt: skip
-TURBO_DESTS_E9A5FD7 = (
+TURBO_DESTS_17B47E9 = (
     "auto_seeds", "bake_lora", "base_model", "battery_percentage_stop_limit", "compute_precision",
     "config_from_metadata", "float32", "guidance", "height", "help", "image", "image_path", "image_strength", "lora",
     "lora_paths", "lora_scales", "lora_style", "low_ram", "metadata", "mlx_cache_limit_gb", "model", "negative_prompt",
@@ -190,7 +196,7 @@ TURBO_DESTS_E9A5FD7 = (
 )  # fmt: skip
 TURBO_OPTIONS = {
     RELEASED_0_24: (OPTION_STRINGS, DESTS),
-    MAIN_E9A5FD7: (TURBO_OPTION_STRINGS_E9A5FD7, TURBO_DESTS_E9A5FD7),
+    MAIN_17B47E9: (TURBO_OPTION_STRINGS_17B47E9, TURBO_DESTS_17B47E9),
 }
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
@@ -200,12 +206,12 @@ POST_LOAD = {
     "mflux-generate-z-image-taef": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_E9A5FD7: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee"},
     ),
     "mflux-generate-z-image-turbo-taef": (
         z_image_turbo_generate.main,
         "model = ZImageTurboCommand.load(args)",
-        {RELEASED_0_24: "29bb850d11014ea6", MAIN_E9A5FD7: "29bb850d11014ea6"},
+        {RELEASED_0_24: "29bb850d11014ea6", MAIN_17B47E9: "29bb850d11014ea6"},
     ),
 }
 
@@ -251,7 +257,7 @@ def path_resolution_rules() -> list[tuple[int, str, str, str]]:
 def test_mflux_build_parser_is_a_reviewed_one() -> None:
     """Bug: mflux's Z-Image parser gains or drops an option (a step-cache flag, say) and the plugin
     keeps passing through a parser nobody checked against its refusals."""
-    actual = ast_fingerprint(z_image_generate.build_parser)
+    actual = parser_fingerprint(z_image_generate.build_parser)
     assert reviewed_sources(BUILD_PARSER_DIGESTS, actual), (
         f"z_image_generate.build_parser changed: {REVIEW_FIRST} {actual}"
     )
@@ -270,8 +276,8 @@ def test_mflux_parser_options_are_reviewed_ones() -> None:
 def test_mflux_turbo_part_is_a_reviewed_one(part: str) -> None:
     """Bug: mflux changes a part of its Z-Image Turbo command that the plugin calls or copies (a parser option, a
     pre-load step in main(), what load builds), and the Turbo command keeps running it unreviewed."""
-    function, digests, review = TURBO_PINS[part]
-    actual = ast_fingerprint(function)
+    function, fingerprint, digests, review = TURBO_PINS[part]
+    actual = fingerprint(function)
     assert reviewed_sources(digests, actual), f"{part} changed: bring {review} in line; {REVIEW_FIRST} {actual}"
 
 
@@ -593,14 +599,17 @@ def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
         return sources_not_ruled_out(accepted, actual, labels)
 
     return {
-        "build_parser": possible(BUILD_PARSER_DIGESTS, ast_fingerprint(z_image_generate.build_parser)),
+        "build_parser": possible(BUILD_PARSER_DIGESTS, parser_fingerprint(z_image_generate.build_parser)),
         "options": possible(OPTIONS, parser_options()),
         "main": possible(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
         "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
         "generate_image": possible(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
         "prediction step": possible(PREDICT_DIGESTS, prediction_step_digests()),
         "turbo options": possible(TURBO_OPTIONS, parser_options(z_image_turbo_generate)),
-        **{part: possible(digests, ast_fingerprint(function)) for part, (function, digests, _) in TURBO_PINS.items()},
+        **{
+            part: possible(digests, fingerprint(function))
+            for part, (function, fingerprint, digests, _) in TURBO_PINS.items()
+        },
         **{
             part: possible(digests, ast_fingerprint(function)) for part, (function, digests, _) in CALLBACK_PINS.items()
         },
