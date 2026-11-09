@@ -80,6 +80,40 @@ similarity to the full VAE for Z-Image; this package adds no timing figure of it
 The two options can run in the same command: mflux writes its step images to its directory and this package writes the
 preview file or frames to the preview path.
 
+## Checked on real weights
+
+On 2026-11-09 the TAEF commands below ran on real weights, and the single-seed 512×512 ones were compared with the
+plain mflux command with the same options. The machine was an Apple M1 Max with 32 GB, macOS 27.2, Python 3.13,
+mflux 0.24.0 and mlx-taef 0.9.0. The prompt was "a red apple on a wooden table" and the seed 42. The models were
+`mflux-community/z-image-turbo-mflux-q4` and `mflux-community/z-image-base-mflux-q4`. The first two lines are the plain
+commands the TAEF images were compared with; the rest are the TAEF commands:
+
+```bash
+mflux-generate-z-image-turbo --model mflux-community/z-image-turbo-mflux-q4 --prompt "a red apple on a wooden table" --steps 8 --seed 42 --width 512 --height 512 --output image.png
+mflux-generate-z-image --model mflux-community/z-image-base-mflux-q4 --base-model z-image --prompt "a red apple on a wooden table" --steps 20 --guidance 4.0 --low-ram --seed 42 --width 512 --height 512 --output image.png
+mflux-generate-z-image-turbo-taef --model mflux-community/z-image-turbo-mflux-q4 --prompt "a red apple on a wooden table" --steps 8 --seed 42 --width 512 --height 512 --output image.png
+mflux-generate-z-image-turbo-taef --model mflux-community/z-image-turbo-mflux-q4 --prompt "a red apple on a wooden table" --steps 8 --seed 42 --width 512 --height 512 --output image.png --taef-frames
+mflux-generate-z-image-turbo-taef --model mflux-community/z-image-turbo-mflux-q4 --prompt "a red apple on a wooden table" --steps 8 --seed 42 43 --width 512 --height 512 --output image.png
+mflux-generate-z-image-taef --model mflux-community/z-image-base-mflux-q4 --base-model z-image --prompt "a red apple on a wooden table" --steps 20 --guidance 4.0 --low-ram --seed 42 --width 512 --height 512 --output image.png --taef-every 5
+mflux-generate-z-image-taef --model mflux-community/z-image-base-mflux-q4 --base-model z-image --prompt "a red apple on a wooden table" --steps 8 --guidance 4.0 --seed 42 --width 1024 --height 1024 --output image.png
+```
+
+- Turbo, 512×512: the TAEF image was pixel-identical to the plain one, and a 512×512 preview was written. With
+  `--taef-frames` the image was identical again, and 8 per-step preview files were written instead of the single
+  preview.
+- Turbo with `--seed 42 43`: the seed-42 image was identical to the single-seed plain image, and each seed got its own
+  preview.
+- Base, 512×512, with `--low-ram` and `--taef-every 5`: the image was identical to the plain one, and a preview was
+  written.
+- Base, 1024×1024: the TAEF command finished and wrote the image and a 1024×1024 preview. There was no plain run of
+  that recipe, so there is no comparison.
+- Ctrl-C after step 3 of 8 (the Turbo 512×512 TAEF command): mflux printed "Stopping image generation at step", the
+  exit code was 0, no image was written, and the preview stayed on disk.
+
+In the single-image 512×512 Turbo runs above, the TAEF command used more memory than the plain one; that is one
+comparison on one machine. The TAEF Turbo command was also started at 1024×1024 and did not finish in this test, so nothing here covers
+Turbo at that size.
+
 ## What the command checks
 
 The command checks your request before it loads any weights. When it can't run, it stops with exit code 2 and a message
