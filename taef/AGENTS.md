@@ -35,6 +35,7 @@ This package follows the namespace model of [mflux PR #776](https://github.com/m
 | Type check | `uv run ty check src` |
 | Build | `uv build` |
 | Repository checks (from the repository root) | `uv run --python 3.13 --no-project scripts/check_plugins.py` |
+| List the memory benchmark's runs and ETA without running them | `uv run python scripts/bench_preview_memory.py --out RUN_DIR --dry-run` |
 
 Every uv command against `.venv-py311` needs `--python 3.11`, `uv sync` and `uv run` alike; without it uv rebuilds that
 environment on 3.13 from `.python-version`. CI sets `UV_PYTHON` instead.
@@ -49,6 +50,9 @@ src/mflux/extras/taef/
   _core.py          # Adapter, run(): the flow every command shares, the preview options and path rules
   z_image_turbo.py  # the Z-Image Turbo command: parser, the copied pre-load statements, ADAPTER, main()
   z_image.py        # the Z-Image command: parser, the copied pre-load step, ADAPTER, main()
+scripts/
+  bench_preview_memory.py  # memory and wall time of each -taef command against the plain mflux command at 1024x1024,
+                           # one fresh process per run; never imported by the package or shipped in the wheel
 tests/
   _fakes.py         # FakeZImage, LoopingFakeZImage, FakeLivePreview
   _fingerprint.py   # AST fingerprints for the drift test
