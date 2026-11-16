@@ -74,8 +74,8 @@ command prints before each seed shows the real path for that seed.
 
 mflux's `--stepwise-image-output-dir` decodes every step with the model's full VAE and keeps every step plus a
 composite image. A preview goes through the tiny decoder into one file. mlx-taef's
-[comparison page](https://github.com/IonDen/mlx-taef/blob/main/COMPARISON.md) has the published decode speed and the
-similarity to the full VAE for Z-Image; this package adds no timing figure of its own.
+[comparison page](https://github.com/IonDen/mlx-taef/blob/main/COMPARISON.md) has the published speed of the decode
+step and the similarity to the full VAE for Z-Image; this package adds no timing figure of its own.
 
 The two options can run in the same command: mflux writes its step images to its directory and this package writes the
 preview file or frames to the preview path.
@@ -109,27 +109,21 @@ mflux-generate-z-image-taef --model mflux-community/z-image-base-mflux-q4 --base
 - Ctrl-C after step 3 of 8 (the Turbo 512×512 TAEF command): mflux printed "Stopping image generation at step", the
   exit code was 0, no image was written, and the preview stayed on disk.
 
-In the single-image 512×512 Turbo runs above, the TAEF command used more memory than the plain one; that is one
-comparison on one machine. For 1024×1024, see the next section.
+For memory at 1024×1024, see the next section.
 
 ## Memory at 1024×1024
 
-At 1024×1024 the live preview uses noticeably more memory when you give neither flag. Add `--low-ram` or
-`--mlx-cache-limit-gb 1` to the TAEF command to keep that extra memory small.
+The live preview runs its own small decoder during the run, so it uses extra memory at any size. If memory is tight,
+add `--low-ram` or `--mlx-cache-limit-gb 1` to the TAEF command.
 
-MLX keeps a cache of memory buffers and puts no cap on it by default. The preview decoder's working buffers add to that
-cache, and either flag caps it once the weights are loaded.
-
-Both flags are mflux's own options, so they lower the plain mflux command's memory too. `--low-ram` also turns on
-tiled VAE decoding. Nothing changes by default: you choose the flag.
+Both flags are mflux's own options and apply to the plain mflux command too. Once the weights are loaded,
+`--mlx-cache-limit-gb N` limits the cache where MLX keeps freed memory buffers to N GB, and `--low-ram` limits it to
+1 GB. On a single-seed run, `--low-ram` also frees the transformer before the final decode. Nothing changes by default:
+you choose the flag.
 
 When the image is 1024×1024 pixels or larger in total (mflux's default size included) and you gave neither flag, the
-commands print one line on stderr before the weights load, once per run. It only names the flags and sets nothing for
-you. For a 1024×1024 image it reads:
-
-```text
-mflux-generate-z-image-turbo-taef: note: at 1024x1024 the live preview uses extra memory. Add --low-ram or --mlx-cache-limit-gb 1 to keep it small (see "Memory at 1024×1024" in the mflux-taef README).
-```
+commands print one line on stderr before the weights load, once per run. It names the two flags, points to this section
+and sets nothing for you.
 
 ## What the command checks
 
@@ -176,9 +170,9 @@ stderr, stops previews for that seed and finishes the image. The plugin writes n
 
 ## What it doesn't do
 
-- No fast final decode. The tiny decoder is for previews; the saved image still uses the model's VAE. mflux's own
-  `--low-ram` stays the option for decode memory. mflux decodes in row strips by default, and `--vae-full-precision`
-  switches that off.
+- No fast final decode. The tiny decoder is for previews; the saved image still uses the model's VAE. On a single-seed
+  run, mflux's own `--low-ram` frees the transformer before that decode. mflux decodes in row strips by default, and
+  `--vae-full-precision` switches that off.
 - No composite image, GIF or video, no terminal or window display, and no record in the image's metadata.
 - No prediction previews for Z-Image: mflux doesn't pass the model's prediction to Z-Image callbacks, so the preview
   decodes the latent.
