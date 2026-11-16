@@ -25,20 +25,25 @@ What the record's numbers mean:
   covers the generation only in those two settings and the whole process in the default one. Compare plain with TAEF
   within one setting, never across settings.
 - ``mlx_cache_peak_bytes``: the highest MLX cache the watchdog saw, sampled every 0.05 s.
-- ``mlx_cache_at_exit_bytes`` and ``wall_s`` (from just before the command's import to its end, model load included).
+- ``mlx_cache_at_exit_bytes`` and ``wall_s`` (from just after the command's import to its end, model load included).
 
 Each record also carries the command and its arguments, the mflux, MLX, mlx-taef and plugin versions, macOS and the
 chip, the UTC start time (``started_utc``), the commit of the checkout this script runs from (``git_commit``,
 ``git rev-parse HEAD``) and that checkout's ``git status --porcelain`` lines (``git_dirty_files``, empty when clean;
-both null when git is unavailable or the script is not in a checkout), the sha256 of the saved image
-(``image_sha256``), and for a TAEF unit the preview check below. Paths in a record are relative to ``--out``.
+both null when git is unavailable or the script is not in a checkout), the sha256 of the saved image's pixels
+(``image_pixels_sha256``: its size and RGB bytes, so the generation time mflux writes into the file does not count),
+the model's snapshot in the local Hugging Face cache (``model_revision``, the hash its ``refs/main`` names; null when
+there is none), and for a TAEF unit the preview check below. Paths in a record are relative to ``--out``.
 
 Inside each unit a watchdog thread reads MLX's active plus cache memory every 0.05 s. When the sum reaches the ceiling
-(``--ceiling-gib``; by default the machine's memory size, MLX's ``device_info()["memory_size"]``, minus 4 GiB) or the
-run passes its wall backstop (``--wall-backstop-s``; 600 s for Turbo, 900 s for Base by default), the unit writes its
-record to disk and exits with code 3, and the whole run stops with the record under ``problems/``.
+(``--ceiling-gib``; by default the smaller of the machine's memory size minus 4 GiB and MLX's recommended working set,
+both from MLX's ``device_info()``) or the run passes its wall backstop (``--wall-backstop-s``; 600 s for Turbo, 900 s
+for Base by default), the unit writes its record to disk and exits with code 3, and the whole run stops with the
+record under ``problems/``. The unit exits with code 3 even when that record cannot be written, and when the watchdog
+itself fails.
 
-A unit counts only when its command exited 0 and saved its image. A TAEF unit also needs its preview to have run:
+A unit counts only when its command exited 0 and saved an image that can be read. A TAEF unit also needs its preview
+to have run:
 ``image.preview.png`` in the unit's folder, written after the unit started, and no "live preview failed" in the unit's
 log (mlx-taef switches the preview off on a decode error and the run goes on). Otherwise the unit is ``preview-off``.
 
@@ -70,11 +75,14 @@ Exit codes:
 
 - 0: every selected unit has a record (or the dry run or the summary printed);
 - 1: at least one unit failed or ran with its preview off; the other units ran;
-- 2: bad arguments, a record that fails its check, a unit folder that is a symbolic link, or no records to summarize;
-- 3: a unit's watchdog stopped it at the memory ceiling or the wall backstop; the run stopped there;
+- 2: bad arguments, a record that fails its check, a unit, ``records/`` or ``problems/`` folder that is a symbolic
+  link, or no records to summarize;
+- 3: a unit's watchdog stopped it at the memory ceiling or the wall backstop (or the unit exited 3 without a record);
+  the run stopped there;
 - 4: a unit was killed by a signal (such as a memory kill) or hung past its backstop; the run stopped there;
 - 5: the TAEF decoder is not in mlx-taef's cache; no unit ran;
-- 128 + N: the script itself got signal N (SIGTERM, SIGHUP) and stopped the running unit first.
+- 128 + N: the script itself got signal N (SIGTERM, or SIGHUP unless it was started with SIGHUP ignored, as under
+  ``nohup``) and stopped the running unit first.
 """
 
 import argparse
@@ -83,6 +91,7 @@ import hashlib
 import importlib
 import importlib.metadata
 import json
+import math
 import os
 import platform
 import re
@@ -249,10 +258,14 @@ def unit_timeouts(model: str, wall_backstop_s: float | None) -> tuple[float, flo
 
 
 def resolve_ceiling_bytes(ceiling_gib: float | None, device_info: Mapping[str, Any]) -> int:
-    """The watchdog's ceiling: --ceiling-gib when given, else the machine's memory size minus 4 GiB."""
+    """The watchdog's ceiling: --ceiling-gib when given, else the smaller of the machine's memory size minus 4 GiB and
+    MLX's recommended working set (MLX buffers past the working set page, and the process and the system need room
+    on top of them)."""
     if ceiling_gib is not None:
         return int(ceiling_gib * GiB)
-    return int(device_info["memory_size"]) - CEILING_HEADROOM_BYTES
+    return min(
+        int(device_info["memory_size"]) - CEILING_HEADROOM_BYTES, int(device_info["max_recommended_working_set_size"])
+    )
 
 
 # The footprint reader: struct rusage_info_v4 from the macOS SDK's sys/resource.h.
@@ -301,14 +314,29 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+# Variables that would point git at another repository, work tree, index or object store than the script's own
+# checkout, or change how it finds that checkout.
+GIT_LOCATION_VARS = (
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+    "GIT_CEILING_DIRECTORIES",
+)
+
+
 def _git(git: str, folder: Path, *args: str) -> str | None:
+    env = {key: value for key, value in os.environ.items() if key not in GIT_LOCATION_VARS}
     try:
         result = subprocess.run(
             [git, "-C", str(folder), *args],
             capture_output=True,
             text=True,
             check=False,
-            env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"},  # status must not write the index
+            env={**env, "GIT_OPTIONAL_LOCKS": "0"},  # status must not write the index
         )
     except OSError:
         return None
@@ -365,10 +393,12 @@ def _fsync_dir(folder: Path) -> None:
 
 def write_json(path: Path, data: Mapping[str, Any]) -> None:
     """Write to a new temporary file beside `path` (a fresh name, never an existing file or link), fsync it, then
-    rename, so a reader never sees half a record and the record survives a crash right after."""
+    rename, so a reader never sees half a record and the record survives a crash right after. The record is readable
+    by everyone (0644), not mkstemp's 0600."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
+        os.fchmod(f.fileno(), 0o644)
         json.dump(data, f, indent=2)
         f.flush()
         os.fsync(f.fileno())
@@ -415,9 +445,17 @@ class Watchdog:
         return False
 
     def _loop(self) -> None:
+        """Fails closed: an exception from a check (a failed read, a trip that raised) ends the process with exit 3,
+        because a run without its watchdog has no memory brake."""
         while not self._stop.wait(POLL_S):
-            if self.check_once():
-                return
+            try:
+                if self.check_once():
+                    return
+            except BaseException as exc:  # noqa: BLE001 -- fail closed: any failure ends the unit with exit 3
+                try:
+                    print(f"[watchdog] failed, stopping the unit: {exc!r}", file=sys.stderr, flush=True)
+                finally:
+                    os._exit(3)
 
     def start(self) -> None:
         self._thread.start()
@@ -425,6 +463,34 @@ class Watchdog:
     def stop(self) -> None:
         self._stop.set()
         self._thread.join(timeout=1.0)
+
+
+class RecordFinisher:
+    """Writes the child's record once. The first caller (the main thread at the command's end, or a watchdog trip)
+    wins; a later caller waits for that write to finish and writes nothing, so a record is never "ok" with an
+    "abort" key."""
+
+    def __init__(
+        self,
+        record: dict[str, Any],
+        path: Path,
+        *,
+        measure: Callable[[], Mapping[str, Any]],
+        write: Callable[[Path, Mapping[str, Any]], None] = write_json,
+    ) -> None:
+        self.record, self.path, self.measure, self.write = record, path, measure, write
+        self._lock = threading.Lock()
+        self._done = False
+
+    def finish(self, status: str, exit_code: int, **extra: Any) -> bool:
+        """True when this call wrote the record; False when an earlier call already had."""
+        with self._lock:
+            if self._done:
+                return False
+            self._done = True
+            self.record.update(status=status, exit_code=exit_code, **self.measure(), **extra)
+            self.write(self.path, self.record)
+            return True
 
 
 def _resolve(entry: str) -> Callable[[], Any]:
@@ -471,24 +537,28 @@ def child_main(argv: Sequence[str]) -> int:
         "pid": os.getpid(),
     }
 
-    def finish(status: str, exit_code: int, started: float, **extra: Any) -> None:
-        record.update(
-            status=status,
-            exit_code=exit_code,
-            wall_s=time.monotonic() - started,
-            **{MLX_PEAK: mx.get_peak_memory(), CACHE_PEAK: watchdog.cache_peak},
-            mlx_cache_at_exit_bytes=mx.get_cache_memory(),
-            **{FOOTPRINT: lifetime_peak_footprint(os.getpid())},
-            **extra,
-        )
-        write_json(ns.record, record)
-
     started = time.monotonic()
 
+    def measure() -> dict[str, Any]:
+        return {
+            "wall_s": time.monotonic() - started,
+            MLX_PEAK: mx.get_peak_memory(),
+            CACHE_PEAK: watchdog.cache_peak,
+            "mlx_cache_at_exit_bytes": mx.get_cache_memory(),
+            FOOTPRINT: lifetime_peak_footprint(os.getpid()),
+        }
+
+    finisher = RecordFinisher(record, ns.record, measure=measure)
+
     def trip(info: dict[str, Any]) -> None:
-        finish("aborted", 3, started, abort=info)  # on disk, fsync'd, before the exit
-        print(f"[watchdog] {json.dumps(info)}", file=sys.stderr, flush=True)
-        os._exit(3)
+        """Writes the abort record (on disk, fsync'd) and exits 3; exits 3 also when the write fails."""
+        try:
+            print(f"[watchdog] {json.dumps(info)}", file=sys.stderr, flush=True)
+            finisher.finish("aborted", 3, abort=info)
+        except BaseException as exc:  # noqa: BLE001 -- say why, then exit 3 in the finally
+            print(f"[watchdog] could not write the abort record: {exc!r}", file=sys.stderr, flush=True)
+        finally:
+            os._exit(3)
 
     watchdog = Watchdog(
         ceiling_bytes=ceiling,
@@ -508,7 +578,7 @@ def child_main(argv: Sequence[str]) -> int:
         code = _exit_code(exc.code)
     finally:
         watchdog.stop()
-        finish("ok" if code == 0 else "failed", code, started)
+        finisher.finish("ok" if code == 0 else "failed", code)
     return code
 
 
@@ -594,12 +664,52 @@ def _open_log(path: Path) -> int:
     return os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1 << 20), b""):
-            digest.update(block)
+def image_pixels_sha256(path: Path) -> str | None:
+    """The sha256 of the image's size (as "<width>x<height>") followed by its RGB pixel bytes, or None when no image
+    can be read from `path`. The file's own bytes would differ between runs with the same pixels: mflux writes the
+    generation time into every image's metadata."""
+    from PIL import Image  # Pillow comes with mflux; imported here so the orchestrator's start stays light
+
+    try:
+        with Image.open(path) as image:
+            rgb = image.convert("RGB")
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return None
+    digest = hashlib.sha256(f"{rgb.width}x{rgb.height}".encode())
+    digest.update(rgb.tobytes())
     return digest.hexdigest()
+
+
+def _hub_cache(environ: Mapping[str, str]) -> Path:
+    """The folder huggingface_hub reads its model cache from, by its own rules (huggingface_hub.constants):
+    HF_HUB_CACHE, else HUGGINGFACE_HUB_CACHE, else HF_HOME/hub, else $XDG_CACHE_HOME/huggingface/hub, else
+    ~/.cache/huggingface/hub."""
+    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
+        if environ.get(name):
+            return Path(os.path.expandvars(environ[name])).expanduser()
+    home = environ.get("HF_HOME") or os.path.join(environ.get("XDG_CACHE_HOME") or "~/.cache", "huggingface")
+    return Path(os.path.expandvars(home)).expanduser() / "hub"
+
+
+_REVISION = re.compile(r"[0-9a-f]{40}")
+
+
+def model_revision(repo: str, environ: Mapping[str, str]) -> str | None:
+    """The snapshot hash the local cache's refs/main names for `repo`: a plain file read, never a Hub call. None when
+    there is no such file or it holds no commit hash."""
+    path = _hub_cache(environ) / f"models--{repo.replace('/', '--')}" / "refs" / "main"
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    return text if _REVISION.fullmatch(text) else None
+
+
+def _refuse_symlinked_folders(out_dir: Path) -> None:
+    """records/ and problems/ must be real folders (or absent), never links that send records elsewhere."""
+    for name in ("records", "problems"):
+        if (out_dir / name).is_symlink():
+            raise BenchError(f"{out_dir / name} is a symbolic link; refusing to write records there")
 
 
 def preview_check(unit_dir: Path, unit_name: str, started_ns: int) -> dict[str, Any]:
@@ -629,7 +739,13 @@ def preview_check(unit_dir: Path, unit_name: str, started_ns: int) -> dict[str, 
 
 
 def unit_outcome(
-    *, rc: int, timed_out: bool, child_status: str | None, image_exists: bool, preview: Mapping[str, Any] | None
+    *,
+    rc: int,
+    timed_out: bool,
+    child_status: str | None,
+    image_exists: bool,
+    image_readable: bool,
+    preview: Mapping[str, Any] | None,
 ) -> tuple[str, str | None]:
     """The unit's kind (ok, failed, preview-off, aborted, killed) and the reason, when there is one to give."""
     if timed_out:
@@ -638,10 +754,14 @@ def unit_outcome(
         return "killed", f"signal {signal.Signals(-rc).name}"
     if rc == 3 and child_status == "aborted":
         return "aborted", None
+    if rc == 3 and child_status is None:  # the command's own exit 3 always gets a "failed" record from the child
+        return "aborted", "exit 3 without a record: the watchdog stopped the unit and could not write its record"
     if rc != 0 or child_status != "ok":
         return "failed", None
     if not image_exists:
         return "failed", "no output image"
+    if not image_readable:
+        return "failed", "output image unreadable"
     if preview is not None and not preview["ok"]:
         return "preview-off", preview["reason"]
     return "ok", None
@@ -662,6 +782,7 @@ def run_unit(
     """Run one unit in a fresh process group (or, with keep_group, in this one) and write its record. Returns ok,
     failed, preview-off, aborted or killed. The child runs in `out_dir`, so the paths it is given, and records, are
     relative to it."""
+    _refuse_symlinked_folders(out_dir)
     unit_dir = out_dir / unit.name
     _prepare_unit_dir(unit_dir)
     folder = Path(unit.name)
@@ -705,16 +826,23 @@ def run_unit(
     record: dict[str, Any] = json.loads(child_record.read_text()) if child_record.exists() else {}
     image = unit_dir / IMAGE_NAME
     image_exists = image.is_file() and not image.is_symlink()
+    digest = image_pixels_sha256(image) if image_exists else None
     preview = preview_check(unit_dir, unit.name, started_ns) if unit.variant == "taef" else None
     record.update(
         unit.fields(),
         exit_code=rc,
         log=f"{unit.name}/log.txt",
-        image_sha256=_sha256(image) if image_exists else None,
+        image_pixels_sha256=digest,
+        model_revision=model_revision(MODELS[unit.model].repo, os.environ),
         preview_check=preview,
     )
     kind, reason = unit_outcome(
-        rc=rc, timed_out=timed_out, child_status=record.get("status"), image_exists=image_exists, preview=preview
+        rc=rc,
+        timed_out=timed_out,
+        child_status=record.get("status"),
+        image_exists=image_exists,
+        image_readable=digest is not None,
+        preview=preview,
     )
     if kind == "ok":
         write_json(out_dir / "records" / f"{unit.name}.json", record)
@@ -733,7 +861,12 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _is_number(value: object) -> bool:
-    return isinstance(value, int | float) and not isinstance(value, bool)
+    """An int or a finite float; never a bool, NaN or an infinity (JSON readers accept those)."""
+    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+
+
+# Each known arm and the (model, setting, variant) it is made of.
+ARM_PARTS = {f"{m}-{s}-{v}": (m, s, v) for m in MODELS for s in SETTINGS for v in VARIANTS}
 
 
 def check_record(path: Path, rec: object) -> dict[str, Any]:
@@ -751,14 +884,18 @@ def check_record(path: Path, rec: object) -> dict[str, Any]:
     match = _UNIT_NAME.fullmatch(path.stem)
     if match is None or rec.get("arm") != match["arm"]:
         raise bad(f"arm is {rec.get('arm')!r}, not the unit's")
+    parts = ARM_PARTS.get(match["arm"])
+    for key, expected in zip(("model", "setting", "variant"), parts or (None, None, None), strict=True):
+        if expected is None or rec.get(key) != expected:
+            raise bad(f"{key} is {rec.get(key)!r}, not the arm's ({match['arm']})")
     for key in MEASURED:
         if not _is_number(rec.get(key)):
             raise bad(f"{key} is {rec.get(key)!r}, not a number")
     if rec.get(FOOTPRINT) is not None and not _is_number(rec.get(FOOTPRINT)):
         raise bad(f"{FOOTPRINT} is {rec.get(FOOTPRINT)!r}, not a number or null")
-    digest = rec.get("image_sha256")
+    digest = rec.get("image_pixels_sha256")
     if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
-        raise bad(f"image_sha256 is {digest!r}, not a sha256")
+        raise bad(f"image_pixels_sha256 is {digest!r}, not a sha256")
     return rec
 
 
@@ -879,8 +1016,14 @@ def _provenance(records: Sequence[Mapping[str, Any]]) -> list[str]:
         "; ".join(r["git_dirty_files"]) or "none" for r in records if isinstance(r.get("git_dirty_files"), list)
     )
     started = sorted(str(r["started_utc"]) for r in records if r.get("started_utc"))
+    revisions = "; ".join(
+        f"{model} {_distinct(r['model_revision'] for r in recs if r.get('model_revision') is not None)}"
+        for model in MODELS
+        if (recs := [r for r in records if r.get("model") == model])
+    )
     lines = [
         f"Commit: {commits}",
+        f"Model revision: {revisions}",
         f"Dirty files: {dirty}",
         f"Started (UTC): {started[0]} to {started[-1]}" if started else "Started (UTC): unknown",
     ]
@@ -900,7 +1043,7 @@ def _image_lines(records: Sequence[Mapping[str, Any]]) -> list[str]:
             recs = [r for r in records if r.get("model") == model and r.get("setting") == setting]
             if not recs:
                 continue
-            digests = {r["image_sha256"] for r in recs}
+            digests = {r["image_pixels_sha256"] for r in recs}
             plain = sum(1 for r in recs if r.get("variant") == "plain")
             taef = sum(1 for r in recs if r.get("variant") == "taef")
             shared = "one image digest" if len(digests) == 1 else f"{len(digests)} image digests"
@@ -944,7 +1087,7 @@ def format_summary(records: Sequence[Mapping[str, Any]]) -> str:
             f"MLX peak since last reset {_gib(d['mlx_peak_since_reset'], sign=True)}, "
             f"MLX cache peak {_gib(d['mlx_cache_peak'], sign=True)}, wall {_secs(d['wall_s'], sign=True)}"
         )
-    lines += ["", "Output images (sha256) per model and setting:", *_image_lines(records)]
+    lines += ["", "Output images (sha256 of the pixels) per model and setting:", *_image_lines(records)]
     return "\n".join(lines)
 
 
@@ -990,8 +1133,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         "--ceiling-gib",
         type=float,
         default=None,
-        help="stop a unit when MLX active + cache memory reaches this many GiB (default: the machine's memory size "
-        "minus 4 GiB)",
+        help="stop a unit when MLX active + cache memory reaches this many GiB (default: the smaller of the machine's "
+        "memory size minus 4 GiB and MLX's recommended working set)",
     )
     parser.add_argument(
         "--wall-backstop-s",
@@ -1037,7 +1180,7 @@ def _print_plan(units: Sequence[Unit], out_dir: Path) -> None:
     todo = [u for u in units if not is_recorded(out_dir, u)]
     for unit in units:
         state = "recorded" if unit not in todo else f"{MODELS[unit.model].eta_min:.1f} min"
-        args = mflux_args(unit, out_dir / unit.name / IMAGE_NAME)
+        args = mflux_args(unit, Path(unit.name) / IMAGE_NAME)  # as run_unit passes it: relative to the run folder
         print(f"{unit.name}  [{state}]  {shlex.join([command_for(unit), *args])}")
     per_unit = ", ".join(f"{name} {MODELS[name].eta_min} min" for name in dict.fromkeys(u.model for u in units))
     print(
@@ -1092,8 +1235,12 @@ def _run(ns: argparse.Namespace, units: Sequence[Unit], entries: Mapping[tuple[s
             keep_group=ns.keep_group,
         )
 
-    # SIGTERM and SIGHUP unwind through run_unit, which kills the running unit's process group on the way out.
-    previous = {sig: signal.signal(sig, _raise_exit) for sig in (signal.SIGTERM, signal.SIGHUP)}
+    # SIGTERM and SIGHUP unwind through run_unit, which kills the running unit's process group on the way out. A
+    # SIGHUP that is ignored at start (nohup) stays ignored, so closing the terminal does not end the run.
+    signals = [signal.SIGTERM]
+    if signal.getsignal(signal.SIGHUP) is not signal.SIG_IGN:
+        signals.append(signal.SIGHUP)
+    previous = {sig: signal.signal(sig, _raise_exit) for sig in signals}
     try:
         ns.out.mkdir(parents=True, exist_ok=True)
         return run_matrix(units, ns.out, launch=launch, say=lambda line: print(line, flush=True))

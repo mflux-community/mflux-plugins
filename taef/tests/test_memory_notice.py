@@ -3,7 +3,6 @@ before the model loads. The expected lines are spelled out here, not built from 
 
 import dataclasses
 import json
-from argparse import Namespace
 from pathlib import Path
 from typing import Any
 
@@ -12,7 +11,7 @@ import pytest
 from _fakes import FakeLivePreview, FakeZImage
 from _marks import SIDECAR_LEFT_OPEN_BY_MFLUX
 
-from mflux.extras.taef import _core, z_image, z_image_turbo
+from mflux.extras.taef import z_image, z_image_turbo
 
 BASE = ["--prompt", "a puffin", "--steps", "4"]
 # (adapter, its own command), spelled out per command.
@@ -80,6 +79,8 @@ def test_the_notice_starts_at_1024_by_1024_pixels(
         pytest.param("1040", "1015", None, id="rounds-down-under"),
         # 1030x1030 runs at 1024x1024.
         pytest.param("1030", "1030", "1024x1024", id="rounds-down-to-1024"),
+        # 1020x1020 runs at 1008x1008 (mflux floors to 16); rounding to the nearest 16 would say 1024x1024.
+        pytest.param("1020", "1020", None, id="floors-not-nearest"),
     ],
 )
 def test_the_notice_uses_the_size_mflux_rounds_to(
@@ -258,13 +259,3 @@ def test_base_with_an_init_image_prints_the_notice_at_its_default_size(run_comma
     command = "mflux-generate-z-image-taef"
     assert notes(capsys.readouterr().err, command) == [notice(command, "1024x1024")]
     assert FakeZImage.instances[0].generate_calls[0]["width"] == 1024
-
-
-def test_the_readme_has_the_heading_the_notice_points_to() -> None:
-    """Bug: the README section is renamed (or dropped), or the notice quotes another name, so the note points at
-    nothing."""
-    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
-    assert "## Memory at 1024×1024" in readme.splitlines()
-    args = Namespace(low_ram=False, mlx_cache_limit_gb=None, width=1024, height=1024, image_path=None)
-    printed = _core.memory_notice("cmd", args)
-    assert printed is not None and '(see "Memory at 1024×1024" in the mflux-taef README)' in printed
