@@ -19,6 +19,7 @@ from mflux.callbacks.callback_manager import CallbackManager
 from mflux.cli.parser.parsers import CommandLineParser
 from mflux.models.common.config.model_config import ModelConfig
 from mflux.models.common.resolution.path_resolution import PathResolution
+from mflux.utils.dimension_resolver import DimensionResolver
 from mflux.utils.exceptions import ModelConfigError, PromptFileReadError, StopImageGenerationException
 from mflux.utils.generated_image import GeneratedImage
 from mflux.utils.prompt_util import PromptUtil
@@ -319,6 +320,39 @@ def start_line(path: Path, options: PreviewOptions, variant: str) -> str:
     return f"TAEF preview: {path}, {cadence} {decoder}"
 
 
+# From this many pixels (1024x1024) on, the preview's extra memory is worth a note when no memory flag is given.
+NOTICE_MIN_PIXELS = 1024 * 1024
+
+
+def requested_size(args: Namespace) -> tuple[int, int] | None:
+    """The (width, height) mflux generates at: the command's generate() resolves the size with mflux's
+    DimensionResolver (a scale factor such as Turbo's default "auto" next to --image takes that side from the init
+    image's header; without an image, from mflux's 1024 default), and mflux's Config rounds each side down to a
+    multiple of 16. None when the init image can't be read: mflux's own image loading reports that."""
+    try:
+        width, height = DimensionResolver.resolve(
+            width=args.width, height=args.height, reference_image_path=getattr(args, "image_path", None)
+        )
+    except Exception:  # noqa: BLE001 -- any unreadable init image: no note, and mflux's own path fails on it
+        return None
+    return 16 * (width // 16), 16 * (height // 16)
+
+
+def memory_notice(command: str, args: Namespace) -> str | None:
+    """The one-line note on the preview's extra memory, or None: below 1024x1024 at the size mflux generates at, with
+    --low-ram or with --mlx-cache-limit-gb at any value, or when the init image the size comes from can't be read."""
+    if args.low_ram or args.mlx_cache_limit_gb is not None:
+        return None
+    size = requested_size(args)
+    if size is None or size[0] * size[1] < NOTICE_MIN_PIXELS:
+        return None
+    width, height = size
+    return (
+        f"{command}: note: at {width}x{height} the live preview uses extra memory. Add --low-ram or "
+        '--mlx-cache-limit-gb 1 to keep it small (see "Memory at 1024×1024" in the mflux-taef README).'
+    )
+
+
 def run(adapter: Adapter) -> None:
     parser = adapter.build_parser()
     args = parser.parse_args()
@@ -343,6 +377,9 @@ def run(adapter: Adapter) -> None:
         )
         raise SystemExit(1) from None
 
+    notice = memory_notice(adapter.command, args)
+    if notice is not None:
+        print(notice, file=sys.stderr)
     model = adapter.load(args)
     memory_saver = None
     try:

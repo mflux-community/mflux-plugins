@@ -128,6 +128,11 @@ half: it installs mlx-taef from its `main` branch and runs this package's tests.
 - Never call `mx.set_wired_limit`, `mx.set_memory_limit`, `mx.set_cache_limit` or anything in `mx.metal` in this
   package. These limits are process-wide: mflux sets the cache limit from `--low-ram` and `--mlx-cache-limit-gb`, and
   the wired and memory limits belong to whoever runs the command. `tests/test_memory_limits.py` checks `src/`.
+- At 1024x1024 pixels and above, without `--low-ram` or `--mlx-cache-limit-gb` (any value), `run()` prints one memory
+  note (`memory_notice`) on stderr after the decoder is prepared and right before `load()`. The size is the one mflux
+  generates at: resolved by mflux's `DimensionResolver` (with `--image`, a scale factor such as Turbo's "auto" takes
+  that side from the init image's header; an unreadable image prints no note and fails in mflux's own path), then
+  each side rounded down to a multiple of 16 as mflux's `Config` does; `tests/test_memory_notice.py`.
 - Z-Image passes no `denoised` to in-loop callbacks, and the latents it passes are not evaluated yet:
   `ZImage.generate_image` calls `ctx.in_loop(t, latents)` before `mx.eval(latents)`. The preview decodes the latent, and
   nothing here may keep it across steps.
