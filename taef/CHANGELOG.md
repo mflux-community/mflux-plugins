@@ -4,6 +4,19 @@ All notable changes to this plugin are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- A one-line note on stderr before the weights load, once per run, when the image is 1024×1024 pixels or more in total
+  and neither `--low-ram` nor `--mlx-cache-limit-gb` was given. It names the two flags. No default changes and no
+  memory limit is set.
+
+### Documentation
+
+- The README now states the preview's memory at 1024×1024 for both commands, measured by a script in `scripts/`, and
+  the flags (`--low-ram`, `--mlx-cache-limit-gb 1`) that keep it under 1 GiB.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added
