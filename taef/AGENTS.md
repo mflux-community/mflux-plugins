@@ -35,6 +35,7 @@ This package follows the namespace model of [mflux PR #776](https://github.com/m
 | Type check | `uv run ty check src` |
 | Build | `uv build` |
 | Repository checks (from the repository root) | `uv run --python 3.13 --no-project scripts/check_plugins.py` |
+| List the memory benchmark's runs and ETA without running them | `uv run python scripts/bench_preview_memory.py --out RUN_DIR --dry-run` |
 
 Every uv command against `.venv-py311` needs `--python 3.11`, `uv sync` and `uv run` alike; without it uv rebuilds that
 environment on 3.13 from `.python-version`. CI sets `UV_PYTHON` instead.
@@ -49,6 +50,9 @@ src/mflux/extras/taef/
   _core.py          # Adapter, run(): the flow every command shares, the preview options and path rules
   z_image_turbo.py  # the Z-Image Turbo command: parser, the copied pre-load statements, ADAPTER, main()
   z_image.py        # the Z-Image command: parser, the copied pre-load step, ADAPTER, main()
+scripts/
+  bench_preview_memory.py  # memory and wall time of each -taef command against the plain mflux command at 1024x1024,
+                           # one fresh process per run; never imported by the package or shipped in the wheel
 tests/
   _fakes.py         # FakeZImage, LoopingFakeZImage, FakeLivePreview
   _fingerprint.py   # AST fingerprints for the drift test
@@ -124,6 +128,11 @@ half: it installs mlx-taef from its `main` branch and runs this package's tests.
 - Never call `mx.set_wired_limit`, `mx.set_memory_limit`, `mx.set_cache_limit` or anything in `mx.metal` in this
   package. These limits are process-wide: mflux sets the cache limit from `--low-ram` and `--mlx-cache-limit-gb`, and
   the wired and memory limits belong to whoever runs the command. `tests/test_memory_limits.py` checks `src/`.
+- At 1024x1024 pixels and above, without `--low-ram` or `--mlx-cache-limit-gb` (any value), `run()` prints one memory
+  note (`memory_notice`) on stderr after the decoder is prepared and right before `load()`. The size is the one mflux
+  generates at: resolved by mflux's `DimensionResolver` (with `--image`, a scale factor such as Turbo's "auto" takes
+  that side from the init image's header; an unreadable image prints no note and fails in mflux's own path), then
+  each side rounded down to a multiple of 16 as mflux's `Config` does; `tests/test_memory_notice.py`.
 - Z-Image passes no `denoised` to in-loop callbacks, and the latents it passes are not evaluated yet:
   `ZImage.generate_image` calls `ctx.in_loop(t, latents)` before `mx.eval(latents)`. The preview decodes the latent, and
   nothing here may keep it across steps.

@@ -110,9 +110,66 @@ mflux-generate-z-image-taef --model mflux-community/z-image-base-mflux-q4 --base
 - Ctrl-C after step 3 of 8 (the Turbo 512×512 TAEF command): mflux printed "Stopping image generation at step", the
   exit code was 0, no image was written, and the preview stayed on disk.
 
-In the single-image 512×512 Turbo runs above, the TAEF command used more memory than the plain one; that is one
-comparison on one machine. The TAEF Turbo command was also started at 1024×1024 and did not finish in this test, so nothing here covers
-Turbo at that size.
+Memory at 1024×1024, for both commands, is measured in the next section.
+
+## Memory at 1024×1024
+
+At 1024×1024 the preview costs about 2 GiB of extra memory when you add no flag. Add `--low-ram` or
+`--mlx-cache-limit-gb 1` to the TAEF command and the preview costs under 1 GiB. The whole run then stays below the
+plain command without a flag.
+
+The cause is MLX's cache. It keeps the preview decoder's freed buffers instead of handing them back. Either flag stops
+that.
+
+Footprint here is the peak physical memory of the generating process, as macOS counts it. MLX's own peak is lower.
+All numbers are in GiB:
+
+| Model | Setting | Plain command | TAEF command | Preview adds |
+|---|---|---|---|---|
+| Turbo | no flag | 9.32 | 11.29 | +1.97 |
+| Turbo | `--low-ram` | 5.66 | 6.58 | +0.92 |
+| Turbo | `--mlx-cache-limit-gb 1` | 5.64 | 6.57 | +0.94 |
+| Base | no flag | 8.28 | 10.42 | +2.14 |
+| Base | `--low-ram` | 5.92 | 6.58 | +0.66 |
+| Base | `--mlx-cache-limit-gb 1` | 5.89 | 6.58 | +0.69 |
+
+The setting applies to both commands in a row. A TAEF command with either flag (6.58 and 6.57 for Turbo, 6.58 for Base)
+peaks below the plain command with no flag (9.32 for Turbo, 8.28 for Base). Nothing changes by default. You choose the
+flag.
+
+Both flags are mflux's own options, and they lower the plain command too. With `--mlx-cache-limit-gb 1`, the plain
+Turbo command peaks at 5.64 instead of 9.32, and the plain Base command at 5.89 instead of 8.28. On this recipe the TAEF
+command took about the same time with the limit as without it: 88.9 seconds against 89.3 for Turbo, and 168.1 against
+169.0 for Base.
+
+When the image is 1024×1024 pixels or larger in total (mflux's default size included) and you gave neither flag, the
+commands print one line on stderr before the weights load, once per run. It only names the flags and sets nothing for
+you. For a 1024×1024 image it reads:
+
+```text
+mflux-generate-z-image-turbo-taef: note: at 1024x1024 the live preview uses extra memory. Add --low-ram or --mlx-cache-limit-gb 1 to keep it small (see "Memory at 1024×1024" in the mflux-taef README).
+```
+
+Measured on an Apple M1 Max with 32 GB, macOS 27.2.1, Python 3.13.12, MLX 0.32.3, mflux 0.24.0, mlx-taef 0.9.0 and
+mflux-taef 0.1.0 (the code on `main` at commit 52aebfe), on 2026-11-16. Every run was 1024×1024, 8 steps, seed 42, the
+prompt "a red apple on a wooden table". Turbo used `mflux-community/z-image-turbo-mflux-q4`. Base used
+`mflux-community/z-image-base-mflux-q4` with `--base-model z-image --guidance 4.0`. Each setting ran 3 times and the
+table shows the median.
+
+To measure it yourself, run
+[`scripts/bench_preview_memory.py`](https://github.com/mflux-community/mflux-plugins/blob/main/taef/scripts/bench_preview_memory.py)
+from the `taef/` folder of a checkout. It loads the real models, so download both first, because the runs work offline.
+The full set is 36 runs and takes about 80 minutes on the machine above (about 90 seconds per Turbo run and about 169
+seconds per Base run).
+
+```bash
+uv run python scripts/bench_preview_memory.py --out RUN_DIR --dry-run
+uv run python scripts/bench_preview_memory.py --out RUN_DIR
+uv run python scripts/bench_preview_memory.py --summarize RUN_DIR
+```
+
+The first line lists the runs and the time estimate without running anything. The second runs them, and running it
+again resumes where it stopped. The third prints the median for each setting and what the TAEF command adds.
 
 ## What the command checks
 
