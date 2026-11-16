@@ -11,8 +11,6 @@ All notable changes to this plugin are listed here. The format follows
 - A one-line note on stderr before the weights load, once per run, when the image is 1024×1024 pixels or more in total
   and neither `--low-ram` nor `--mlx-cache-limit-gb` was given. It names the two flags. No default changes and no
   memory limit is set.
-- A README section, "Memory at 1024×1024", on the preview's extra memory at that size. It names the two flags that
-  keep it small, `--low-ram` and `--mlx-cache-limit-gb 1`.
 
 ## [0.1.0] - 2026-11-09
 
