@@ -142,6 +142,18 @@ def fake_command_over_ceiling() -> None:
     time.sleep(30)
 
 
+def fake_command_locks_its_folder_and_crosses_the_ceiling() -> None:
+    """Makes the unit's folder read-only, so no record can be written there, then crosses the test's 1 MiB ceiling
+    and waits for the watchdog."""
+    import mlx.core as mx
+
+    _output_path().parent.chmod(0o500)
+    freed = mx.ones((4 * MiB,))  # 16 MiB of float32
+    mx.eval(freed)
+    del freed
+    time.sleep(30)
+
+
 def fake_command_hangs() -> None:
     time.sleep(30)
 
@@ -186,6 +198,24 @@ def fake_command_clears_cache() -> None:
 
 def fake_command_unreadable_image() -> None:
     _output_path().write_bytes(b"not an image")
+
+
+def fake_command_leaves_a_record_that_is_no_object() -> None:
+    """Leaves a child record whose JSON is a list, then ends the child before it writes a record of its own."""
+    (_output_path().parent / "child-record.json").write_text("[]")
+    os._exit(1)
+
+
+def fake_command_leaves_a_record_that_is_no_json() -> None:
+    """Leaves a child record cut off mid-object, then ends the child before it writes a record of its own."""
+    (_output_path().parent / "child-record.json").write_text('{"status": "o')
+    os._exit(1)
+
+
+def fake_command_leaves_a_folder_for_its_record() -> None:
+    """Leaves a folder where the child record goes (reading it raises an OSError), then ends the child."""
+    (_output_path().parent / "child-record.json").mkdir()
+    os._exit(1)
 
 
 def _entries(plain: str, taef: str | None = None) -> dict[tuple[str, str], str]:
@@ -252,7 +282,7 @@ def _subprocess_keep_group_unit() -> None:
         unit,
         Path(os.environ["BENCH_TEST_OUT"]),
         entry="test_bench_preview_memory:fake_command_with_grandchild",
-        ceiling_gib=23.0,
+        ceiling_gib=2.0,
         wall_backstop_s=60.0,
         parent_timeout_s=3.0,
         keep_group=True,
@@ -269,6 +299,17 @@ def _subprocess_watchdog_read_fails() -> None:
 
     bench.Watchdog(ceiling_bytes=GiB, wall_backstop_s=60.0, read=read, on_trip=lambda info: None).start()
     time.sleep(30)
+
+
+def _subprocess_child_with_fake_mlx() -> None:
+    """Runs child_main with mlx.core replaced by FakeMlxCore (its device_info from the environment), so the child's
+    watchdog thread lives in this process, never in pytest's."""
+    import mlx
+
+    fake = FakeMlxCore(json.loads(os.environ["BENCH_TEST_DEVICE_INFO"]))
+    sys.modules["mlx.core"] = fake
+    mlx.core = fake
+    sys.exit(bench.child_main(json.loads(os.environ["BENCH_TEST_ARGV"])))
 
 
 def _helper(name: str, env: dict[str, str], cwd: Path, *, launcher: Sequence[str] = ()) -> subprocess.Popen[str]:
@@ -335,11 +376,61 @@ def test_an_unknown_setting_is_refused(script: ModuleType, tmp_path: Path) -> No
     assert raised.value.code == 2
 
 
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-0.001", "-1"])
+def test_a_ceiling_that_is_not_a_finite_size_above_zero_is_refused(
+    script: ModuleType, tmp_path: Path, capsys: Any, value: str
+) -> None:
+    """Bug: --ceiling-gib takes any float, so nan or inf (no ceiling at all) or 0 or a negative value (the watchdog
+    trips at its first poll and every unit stops within seconds) passes the parser and the night measures nothing."""
+    with pytest.raises(SystemExit) as raised:
+        # The = form hands "-inf" to the type check; written apart, argparse would take it for an option.
+        script.parse_args(["--out", str(tmp_path), f"--ceiling-gib={value}"])
+    assert raised.value.code == 2
+    assert "--ceiling-gib" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("value", "expected"), [("0.001", 0.001), ("20", 20.0)])
+def test_a_finite_ceiling_above_zero_is_kept(script: ModuleType, tmp_path: Path, value: str, expected: float) -> None:
+    """Bug: the ceiling check refuses every value below 1 GiB (or turns the value into an int), so a small test
+    ceiling cannot be set."""
+    assert script.parse_args(["--out", str(tmp_path), "--ceiling-gib", value]).ceiling_gib == expected
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "-inf", "0", "-0.001", "-1"])
+def test_a_wall_backstop_that_is_not_a_finite_time_above_zero_is_refused(
+    script: ModuleType, tmp_path: Path, capsys: Any, value: str
+) -> None:
+    """Bug: --wall-backstop-s takes any float, so nan or inf (the wall backstop and the parent's timeout never fire)
+    or 0 or a negative value (every unit stops at the watchdog's first poll) passes the parser."""
+    with pytest.raises(SystemExit) as raised:
+        script.parse_args(["--out", str(tmp_path), f"--wall-backstop-s={value}"])
+    assert raised.value.code == 2
+    assert "--wall-backstop-s" in capsys.readouterr().err
+
+
+def test_a_finite_wall_backstop_above_zero_is_kept(script: ModuleType, tmp_path: Path) -> None:
+    """Bug: the backstop check refuses a fraction of a second (or turns the value into an int), so a short test
+    backstop cannot be set."""
+    assert script.parse_args(["--out", str(tmp_path), "--wall-backstop-s", "0.5"]).wall_backstop_s == 0.5
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "0", "-1"])
+def test_the_child_refuses_a_wall_backstop_that_is_not_a_finite_time_above_zero(tmp_path: Path, value: str) -> None:
+    """Bug: the child's own parser takes any float for --wall-backstop-s, so a child started by hand (or by a parent
+    that skipped the check) runs with nan or inf (no wall backstop) or stops at once."""
+    record = tmp_path / "child-record.json"
+    rc, _, output = _run_child(record, tmp_path, "fake_command_image_only", f"--wall-backstop-s={value}")
+    assert rc == 2, output
+    assert "--wall-backstop-s" in output
+    assert not record.exists()
+
+
 def test_a_base_taef_unit_runs_the_taef_command_with_the_base_recipe_and_its_setting(
     script: ModuleType, tmp_path: Path
 ) -> None:
     """Bug: the Base unit drops --guidance 4.0 or --base-model z-image, or the setting's flag never reaches mflux, so
-    the run measures a different recipe from the one the README states."""
+    the Base TAEF unit runs another recipe than the base model, 8 steps, guidance 4.0 and the setting's flag spelled
+    out below."""
     (unit,) = [u for u in script.build_units(models=["base"], settings=["cache-1"], reps=1) if u.variant == "taef"]
     assert script.command_for(unit) == "mflux-generate-z-image-taef"
     assert script.ENTRIES[("base", "taef")] == "mflux.extras.taef.z_image:main"
@@ -612,13 +703,19 @@ def test_write_json_never_writes_through_a_planted_temporary_name(script: Module
         pytest.param(
             {"footprint_lifetime_peak_bytes": float("-inf")}, "footprint_lifetime_peak_bytes", id="footprint-infinite"
         ),
+        # A 401-digit integer, past the largest float: JSON reads it as an int.
+        pytest.param({"wall_s": 10**400}, "wall_s", id="wall-past-float"),
+        pytest.param(
+            {"footprint_lifetime_peak_bytes": 10**400}, "footprint_lifetime_peak_bytes", id="footprint-past-float"
+        ),
     ],
 )
 def test_load_records_refuses_a_record_that_fails_its_check(
     script: ModuleType, tmp_path: Path, change: dict[str, Any], message: str
 ) -> None:
     """Bug: --summarize takes medians of whatever records/ holds, so a failed run, a file copied in under another
-    unit's name, a record of the other arm or a non-number moves a published median."""
+    unit's name, a record of the other arm or a non-number moves a published median; or an integer too large for a
+    float ends the check in an OverflowError traceback instead of an error that names the file."""
     rec = _record("turbo", "default", "plain", 1)
     (tmp_path / "records").mkdir()
     path = tmp_path / "records" / "turbo-default-plain-r1.json"
@@ -657,12 +754,23 @@ def test_summarize_command_refuses_a_bad_record_with_exit_2(script: ModuleType, 
     assert "turbo-default-plain-r1.json" in capsys.readouterr().err
 
 
+def test_summarize_refuses_a_record_nested_too_deep_to_parse_with_exit_2(
+    script: ModuleType, tmp_path: Path, capsys: Any
+) -> None:
+    """Bug: read_record catches OSError and ValueError but not RecursionError, so a record of deeply nested JSON ends
+    --summarize in a traceback instead of one error line that names the file."""
+    (tmp_path / "records").mkdir()
+    (tmp_path / "records" / "turbo-default-plain-r1.json").write_text("[" * 100_000)
+    assert script.main(["--summarize", str(tmp_path)]) == 2
+    assert "turbo-default-plain-r1.json" in capsys.readouterr().err
+
+
 # Summary math
 
 
 def test_the_summary_takes_the_median_of_the_reps_and_taef_minus_plain(script: ModuleType) -> None:
-    """Bug: the summary takes the mean (or the last rep), or subtracts TAEF from plain, so the README states the
-    wrong excess."""
+    """Bug: the summary takes the mean (or the last rep), or subtracts TAEF from plain, so the medians and the TAEF
+    minus plain excess differ from the ones worked out below by hand."""
     records = [
         _record("turbo", "default", "plain", 1, footprint=8.5, peak=7.0, wall=80.0, cache_peak=4.0),
         _record("turbo", "default", "plain", 2, footprint=9.5, peak=7.5, wall=90.0, cache_peak=4.5),
@@ -942,7 +1050,11 @@ def test_the_decoder_check_passes_when_mlx_taef_has_the_decoder(
         pytest.param({"rc": 3, "child_status": "failed"}, ("failed", None), id="command-exited-3"),
         pytest.param(
             {"rc": 3, "child_status": None},
-            ("aborted", "exit 3 without a record: the watchdog stopped the unit and could not write its record"),
+            (
+                "aborted",
+                "the watchdog stopped the unit (a trip whose record could not be written, or the watchdog itself "
+                "failed)",
+            ),
             id="exit-3-without-a-record",
         ),
         pytest.param({"rc": 1, "child_status": "failed"}, ("failed", None), id="failed"),
@@ -964,6 +1076,13 @@ def test_unit_outcome(script: ModuleType, given: dict[str, Any], expected: tuple
     assert script.unit_outcome(**facts) == expected
 
 
+def test_an_exit_3_after_an_ok_record_says_the_watchdog_tripped_after_the_record(script: ModuleType) -> None:
+    """Bug: exit 3 with an ok child record (the watchdog tripped after the record was written) falls through to the
+    plain failure branch with no reason, so the problem record does not say why an ok run failed."""
+    facts = {"rc": 3, "timed_out": False, "child_status": "ok", "image_exists": True, "image_readable": True}
+    assert script.unit_outcome(**facts, preview=None) == ("failed", "the watchdog tripped after the record was written")
+
+
 def _taef_unit(script: ModuleType) -> Any:
     return [u for u in script.build_units(models=["turbo"], settings=["default"], reps=1) if u.variant == "taef"][0]
 
@@ -973,7 +1092,7 @@ def _run_taef_unit(script: ModuleType, tmp_path: Path, fake: str) -> str:
         _taef_unit(script),
         tmp_path,
         entry=f"test_bench_preview_memory:{fake}",
-        ceiling_gib=23.0,
+        ceiling_gib=2.0,
         wall_backstop_s=60.0,
         parent_timeout_s=60.0,
     )
@@ -1025,7 +1144,7 @@ def test_a_unit_without_its_output_image_is_failed(script: ModuleType, tmp_path:
         unit,
         tmp_path,
         entry="test_bench_preview_memory:fake_command_no_image",
-        ceiling_gib=23.0,
+        ceiling_gib=2.0,
         wall_backstop_s=60.0,
         parent_timeout_s=60.0,
     )
@@ -1045,6 +1164,47 @@ def test_a_command_that_exits_3_is_failed_and_the_run_goes_on(
     (problem,) = (out / "problems").glob("turbo-default-plain-r1.failed-*.json")
     assert json.loads(problem.read_text())["exit_code"] == 3
     assert (out / "records" / "turbo-default-taef-r1.json").exists()
+
+
+def test_a_child_record_that_is_no_json_object_counts_as_no_record(
+    script: ModuleType, tmp_path: Path, child_path: None
+) -> None:
+    """Bug: run_unit calls .update() on whatever JSON child-record.json holds, so a record that is a list ends the
+    whole run in an AttributeError traceback instead of a problem record for that unit."""
+    kind = script.run_unit(
+        _one_unit(script),
+        tmp_path,
+        entry="test_bench_preview_memory:fake_command_leaves_a_record_that_is_no_object",
+        ceiling_gib=2.0,
+        wall_backstop_s=60.0,
+        parent_timeout_s=60.0,
+    )
+    assert kind == "failed"
+    (problem,) = (tmp_path / "problems").glob("turbo-default-plain-r1.failed-*.json")
+    rec = json.loads(problem.read_text())
+    assert rec["status"] == "failed" and rec["exit_code"] == 1 and rec["unit"] == "turbo-default-plain-r1"
+
+
+@pytest.mark.parametrize(
+    "fake", ["fake_command_leaves_a_record_that_is_no_json", "fake_command_leaves_a_folder_for_its_record"]
+)
+def test_a_child_record_that_cannot_be_read_as_json_counts_as_no_record(
+    script: ModuleType, tmp_path: Path, child_path: None, fake: str
+) -> None:
+    """Bug: run_unit lets json.loads or read_text raise on child-record.json, so a record that is not JSON (a
+    ValueError) or cannot be read (an OSError) ends the whole run in a traceback instead of a problem record."""
+    kind = script.run_unit(
+        _one_unit(script),
+        tmp_path,
+        entry=f"test_bench_preview_memory:{fake}",
+        ceiling_gib=2.0,
+        wall_backstop_s=60.0,
+        parent_timeout_s=60.0,
+    )
+    assert kind == "failed"
+    (problem,) = (tmp_path / "problems").glob("turbo-default-plain-r1.failed-*.json")
+    rec = json.loads(problem.read_text())
+    assert rec["status"] == "failed" and rec["exit_code"] == 1 and rec["unit"] == "turbo-default-plain-r1"
 
 
 # The footprint reader
@@ -1194,24 +1354,59 @@ class FakeMlxCore:
         pytest.param(11 * GiB + 678, 11 * GiB + 678, id="working-set-is-smaller"),
     ],
 )
-def test_the_child_resolves_its_ceiling_from_mlx_device_info(
-    script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, working_set: int, expected: int
-) -> None:
+def test_the_child_resolves_its_ceiling_from_mlx_device_info(tmp_path: Path, working_set: int, expected: int) -> None:
     """Bug: the child reads the ceiling from another source than mx.device_info() (sysctl's hw.memsize, a constant),
-    or passes it the wrong key, so the recorded and enforced ceiling is not the one this machine's MLX reports."""
-    import mlx
-
-    fake = FakeMlxCore({"memory_size": 16 * GiB + 12345, "max_recommended_working_set_size": working_set})
-    monkeypatch.setitem(sys.modules, "mlx.core", fake)
-    monkeypatch.setattr(mlx, "core", fake)
-    monkeypatch.syspath_prepend(str(TESTS))
-    monkeypatch.setattr(sys, "argv", list(sys.argv))  # the child sets sys.argv for the command
+    or passes it the wrong key, so the recorded and enforced ceiling is not the one this machine's MLX reports. The
+    child runs in a helper process of its own, so its watchdog can never end pytest."""
     record = tmp_path / "child-record.json"
     argv = ["--record", str(record), "--unit", "u", "--command", "c", "--entry"]
     argv += ["test_bench_preview_memory:fake_command_image_only", "--wall-backstop-s", "60"]
     argv += ["--", "--output", str(tmp_path / "image.png")]
-    assert script.child_main(argv) == 0
+    info = {"memory_size": 16 * GiB + 12345, "max_recommended_working_set_size": working_set}
+    env = {"BENCH_TEST_ARGV": json.dumps(argv), "BENCH_TEST_DEVICE_INFO": json.dumps(info)}
+    helper = _helper("_subprocess_child_with_fake_mlx", env, tmp_path)
+    try:
+        output, _ = helper.communicate(timeout=20)
+    finally:
+        if helper.poll() is None:
+            os.killpg(helper.pid, signal.SIGKILL)
+            helper.communicate()
+    assert helper.returncode == 0, output
     assert json.loads(record.read_text())["ceiling_bytes"] == expected
+
+
+@pytest.mark.parametrize(
+    ("ceiling_gib", "returncode"),
+    [
+        pytest.param("10", 0, id="below-the-bound"),
+        pytest.param("11", 0, id="on-the-bound"),
+        pytest.param("11.001", 2, id="above-the-bound"),
+    ],
+)
+def test_the_child_refuses_a_ceiling_above_the_default_bound(tmp_path: Path, ceiling_gib: str, returncode: int) -> None:
+    """Bug: an explicit --ceiling-gib above the default bound (memory size minus 4 GiB, or MLX's recommended working
+    set when smaller) is taken as given, so MLX buffers page before the watchdog fires; or the refusal starts at the
+    bound itself. The device here: 16 GiB of memory, an 11 GiB working set, so the bound is 11 GiB."""
+    record = tmp_path / "child-record.json"
+    image = tmp_path / "image.png"
+    argv = ["--record", str(record), "--unit", "u", "--command", "c", "--entry"]
+    argv += ["test_bench_preview_memory:fake_command_image_only", "--wall-backstop-s", "60"]
+    argv += ["--ceiling-gib", ceiling_gib, "--", "--output", str(image)]
+    info = {"memory_size": 16 * GiB, "max_recommended_working_set_size": 11 * GiB}
+    env = {"BENCH_TEST_ARGV": json.dumps(argv), "BENCH_TEST_DEVICE_INFO": json.dumps(info)}
+    helper = _helper("_subprocess_child_with_fake_mlx", env, tmp_path)
+    try:
+        output, _ = helper.communicate(timeout=20)
+    finally:
+        if helper.poll() is None:
+            os.killpg(helper.pid, signal.SIGKILL)
+            helper.communicate()
+    assert helper.returncode == returncode, output
+    if returncode == 2:
+        assert len(output.strip().splitlines()) == 1 and "--ceiling-gib" in output, output
+        assert not record.exists() and not image.exists(), "the command ran after the refusal"
+    else:
+        assert json.loads(record.read_text())["ceiling_bytes"] == int(float(ceiling_gib) * GiB)
 
 
 def test_a_unit_without_ceiling_gib_records_the_ceiling_from_this_machine(
@@ -1256,7 +1451,7 @@ def test_a_unit_past_its_parent_timeout_is_killed_with_its_whole_process_group(
             unit,
             tmp_path,
             entry="test_bench_preview_memory:fake_command_with_grandchild",
-            ceiling_gib=23.0,
+            ceiling_gib=2.0,
             wall_backstop_s=60.0,
             parent_timeout_s=3.0,
         )
@@ -1286,7 +1481,7 @@ def test_an_interrupted_parent_kills_the_unit_process_group(
                 unit,
                 tmp_path,
                 entry="test_bench_preview_memory:fake_command_with_grandchild",
-                ceiling_gib=23.0,
+                ceiling_gib=2.0,
                 wall_backstop_s=60.0,
                 parent_timeout_s=60.0,
                 wait=interrupted_wait,
@@ -1401,7 +1596,7 @@ def test_main_runs_each_unit_in_a_child_and_writes_its_record(
     (refs / "main").write_text("0123456789abcdef0123456789abcdef89abcdef")
     monkeypatch.setenv("HF_HUB_CACHE", str(hub))
     out = tmp_path / "run"
-    argv = ["--out", str(out), "--models", "turbo", "--settings", "cache-1", "--reps", "1", "--ceiling-gib", "20"]
+    argv = ["--out", str(out), "--models", "turbo", "--settings", "cache-1", "--reps", "1", "--ceiling-gib", "2"]
     assert script.main(argv, entries=_entries("fake_command")) == 0
     text = (out / "records" / "turbo-cache-1-taef-r1.json").read_text()
     rec = json.loads(text)
@@ -1411,7 +1606,7 @@ def test_main_runs_each_unit_in_a_child_and_writes_its_record(
     assert rec["argv"][rec["argv"].index("--output") + 1] == "turbo-cache-1-taef-r1/image.png"
     assert rec["log"] == "turbo-cache-1-taef-r1/log.txt"
     assert str(tmp_path) not in text
-    assert rec["ceiling_bytes"] == 21_474_836_480  # 20 GiB
+    assert rec["ceiling_bytes"] == 2_147_483_648  # 2 GiB
     assert isinstance(rec["mlx_cache_at_exit_bytes"], int)
     assert rec["footprint_lifetime_peak_bytes"] > 0
     assert rec["wall_s"] >= 0
@@ -1424,6 +1619,62 @@ def test_main_runs_each_unit_in_a_child_and_writes_its_record(
     before = (out / "records" / "turbo-cache-1-taef-r1.json").read_text()
     assert script.main(argv, entries=_entries("fake_command_fails")) == 0
     assert (out / "records" / "turbo-cache-1-taef-r1.json").read_text() == before
+
+
+def test_a_base_unit_records_the_base_models_snapshot_not_turbos(
+    script: ModuleType, tmp_path: Path, child_path: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bug: run_unit reads refs/main of a fixed repo (Turbo's) or of the wrong model, so a Base record names the Turbo
+    snapshot, or none, as the weights it ran with."""
+    hub = tmp_path / "hub"
+    for repo, revision in [
+        ("models--mflux-community--z-image-turbo-mflux-q4", "1111111111111111111111111111111111111111"),
+        ("models--mflux-community--z-image-base-mflux-q4", "2222222222222222222222222222222222222222"),
+    ]:
+        (hub / repo / "refs").mkdir(parents=True)
+        (hub / repo / "refs" / "main").write_text(revision)
+    monkeypatch.setenv("HF_HUB_CACHE", str(hub))
+    out = tmp_path / "run"
+    argv = ["--out", str(out), "--models", "base", "--settings", "default", "--only", "base-default-plain-r1"]
+    assert script.main(argv, entries=_entries("fake_command")) == 0
+    rec = json.loads((out / "records" / "base-default-plain-r1.json").read_text())
+    assert rec["model_revision"] == "2222222222222222222222222222222222222222"
+
+
+@pytest.mark.parametrize(
+    ("name", "hub"),
+    [
+        pytest.param("HF_HUB_CACHE", "rel", id="hf-hub-cache"),
+        pytest.param("HUGGINGFACE_HUB_CACHE", "rel", id="legacy-name"),
+        pytest.param("HF_HOME", "rel/hub", id="hf-home"),
+        pytest.param("XDG_CACHE_HOME", "rel/huggingface/hub", id="xdg-cache-home"),
+    ],
+)
+def test_a_relative_cache_folder_is_read_from_the_folder_the_unit_ran_in(
+    script: ModuleType, tmp_path: Path, child_path: None, monkeypatch: pytest.MonkeyPatch, name: str, hub: str
+) -> None:
+    """Bug: run_unit reads refs/main through a relative cache path from the parent's current folder, while the unit
+    ran (and loaded its weights) in the run folder, so the record names another snapshot than the one it loaded."""
+    for variable in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE", "HF_HOME", "XDG_CACHE_HOME"):
+        monkeypatch.delenv(variable, raising=False)
+    monkeypatch.setenv(name, "rel")
+    parent = tmp_path / "parent"
+    out = tmp_path / "run"
+    refs = Path("models--mflux-community--z-image-turbo-mflux-q4") / "refs"
+    for folder, revision in [(out, "a" * 40), (parent, "b" * 40)]:
+        (folder / hub / refs).mkdir(parents=True)
+        (folder / hub / refs / "main").write_text(revision)
+    monkeypatch.chdir(parent)
+    kind = script.run_unit(
+        _one_unit(script),
+        out,
+        entry="test_bench_preview_memory:fake_command_image_only",
+        ceiling_gib=2.0,
+        wall_backstop_s=60.0,
+        parent_timeout_s=60.0,
+    )
+    assert kind == "ok"
+    assert json.loads((out / "records" / "turbo-default-plain-r1.json").read_text())["model_revision"] == "a" * 40
 
 
 def test_main_stops_with_exit_3_and_leaves_the_abort_record_when_a_child_crosses_the_memory_ceiling(
@@ -1455,6 +1706,31 @@ def test_main_stops_with_exit_3_when_a_child_passes_its_wall_backstop(
     assert script.main(argv, entries=_entries("fake_command_hangs")) == 3
     (problem,) = (out / "problems").glob("turbo-default-plain-r1.aborted-*.json")
     assert json.loads(problem.read_text())["abort"]["reason"] == "wall backstop"
+
+
+def test_main_stops_with_exit_3_when_a_tripped_child_could_not_write_its_record(
+    script: ModuleType, tmp_path: Path, child_path: None
+) -> None:
+    """Bug: run_unit reads "exit 3 and no record" as an ordinary failure (or run_matrix lets that kind go on), so a
+    unit whose watchdog fired but could not write its record is followed by the next unit on a machine that just hit
+    the memory ceiling."""
+    out = tmp_path / "run"
+    argv = ["--out", str(out), "--models", "turbo", "--settings", "default", "--reps", "1", "--ceiling-gib", "0.001"]
+    unit_dir = out / "turbo-default-plain-r1"
+    try:
+        code = script.main(argv, entries=_entries("fake_command_locks_its_folder_and_crosses_the_ceiling"))
+    finally:
+        if unit_dir.is_dir():
+            unit_dir.chmod(0o700)
+    assert code == 3
+    assert not (unit_dir / "child-record.json").exists(), "the child wrote its record; the test proves nothing"
+    (problem,) = (out / "problems").glob("turbo-default-plain-r1.aborted-*.json")
+    rec = json.loads(problem.read_text())
+    assert rec["status"] == "aborted" and rec["exit_code"] == 3
+    assert rec["reason"] == (
+        "the watchdog stopped the unit (a trip whose record could not be written, or the watchdog itself failed)"
+    )
+    assert not (out / "turbo-default-taef-r1").exists(), "the next unit ran after the stop"
 
 
 def test_main_records_a_failed_unit_and_retries_it_on_the_next_run(
@@ -1555,8 +1831,8 @@ def _run_child(record: Path, tmp_path: Path, entry: str, *ceiling: str) -> tuple
 
 
 def test_the_watchdog_exits_3_when_its_abort_record_cannot_be_written(tmp_path: Path) -> None:
-    """Bug: the trip writes its record before os._exit(3) without a finally, so a write that raises (a full disk)
-    kills only the watchdog thread; the command then runs on with no ceiling and no wall backstop."""
+    """Bug: neither the trip nor the watchdog loop exits 3 when the write raises (a full disk), so the failed write
+    ends only the watchdog thread and the command runs on with no ceiling and no wall backstop."""
     locked = tmp_path / "locked"
     locked.mkdir()
     locked.chmod(0o500)  # no new file can be made in it
@@ -1583,6 +1859,35 @@ def test_the_watchdog_exits_3_when_its_memory_read_raises() -> None:
     assert helper.returncode == 3, output
     lines = output.splitlines()
     assert len(lines) == 1 and lines[0].startswith("[watchdog]") and "the read failed" in lines[0], output
+
+
+def test_the_watchdog_writes_its_abort_record_when_stderr_cannot_be_written(tmp_path: Path) -> None:
+    """Bug: the trip prints its message and writes the record in one try, so a stderr that can no longer be written
+    (its pipe closed) raises before the write and the unit exits 3 without the record that says why."""
+    record = tmp_path / "child-record.json"
+    argv = [sys.executable, str(SCRIPT), "_child", "--record", str(record), "--unit", "u", "--command", "c"]
+    argv += ["--entry", "test_bench_preview_memory:fake_command_hangs", "--wall-backstop-s", "60"]
+    argv += ["--ceiling-gib", "0", "--", "--output", str(tmp_path / "image.png")]
+    proc = subprocess.Popen(
+        argv,
+        env={**os.environ, "PYTHONPATH": str(TESTS)},
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
+    )
+    assert proc.stderr is not None
+    proc.stderr.close()  # every write the child makes to stderr now fails with a broken pipe
+    try:
+        rc = proc.wait(timeout=20)
+    finally:
+        if proc.poll() is None:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+    assert rc == 3
+    assert record.exists(), "the unit exited 3 without its abort record"
+    rec = json.loads(record.read_text())
+    assert rec["status"] == "aborted" and rec["exit_code"] == 3
+    assert rec["abort"]["reason"] == "memory ceiling"
 
 
 # finish runs once
@@ -1689,7 +1994,7 @@ def test_a_unit_whose_image_cannot_be_read_is_failed(script: ModuleType, tmp_pat
         unit,
         tmp_path,
         entry="test_bench_preview_memory:fake_command_unreadable_image",
-        ceiling_gib=23.0,
+        ceiling_gib=2.0,
         wall_backstop_s=60.0,
         parent_timeout_s=60.0,
     )
@@ -1712,7 +2017,7 @@ def test_the_record_keeps_the_cache_peak_the_watchdog_saw_not_the_cache_at_exit(
         unit,
         tmp_path,
         entry="test_bench_preview_memory:fake_command_clears_cache",
-        ceiling_gib=23.0,
+        ceiling_gib=2.0,
         wall_backstop_s=60.0,
         parent_timeout_s=60.0,
     )
@@ -1856,3 +2161,100 @@ def test_model_revision_is_null_without_a_readable_snapshot_hash(
         (refs / "main").write_text(content)
     environ = {"HF_HUB_CACHE": str(tmp_path)}
     assert script.model_revision("mflux-community/z-image-base-mflux-q4", environ) is None
+
+
+BASE_REFS = Path("models--mflux-community--z-image-base-mflux-q4") / "refs"
+
+
+def _plant_revision(hub: Path, revision: str) -> None:
+    (hub / BASE_REFS).mkdir(parents=True)
+    (hub / BASE_REFS / "main").write_text(revision)
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "hub"),
+    [
+        pytest.param("HF_HUB_CACHE", "$BENCH_TEST_HUB/hub-cache", "hub-cache", id="hf-hub-cache"),
+        pytest.param("HF_HUB_CACHE", "${BENCH_TEST_HUB}/hub-cache", "hub-cache", id="hf-hub-cache-braces"),
+        pytest.param("HUGGINGFACE_HUB_CACHE", "$BENCH_TEST_HUB/legacy", "legacy", id="legacy-name"),
+        pytest.param("HF_HOME", "$BENCH_TEST_HUB/hf-home", "hf-home/hub", id="hf-home"),
+        pytest.param("XDG_CACHE_HOME", "$BENCH_TEST_HUB/xdg", "xdg/huggingface/hub", id="xdg-cache-home"),
+        # A name set nowhere stays as written, as os.path.expandvars leaves it.
+        pytest.param("HF_HUB_CACHE", "$BENCH_TEST_HUB/$BENCH_TEST_UNSET", "$BENCH_TEST_UNSET", id="unknown-name-kept"),
+    ],
+)
+def test_model_revision_expands_variables_from_the_environment_it_is_given(
+    script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, value: str, hub: str
+) -> None:
+    """Bug: the cache path's variables are expanded from this process's os.environ instead of the environment passed
+    in, so the record names the snapshot in another folder than the one that environment points huggingface_hub at."""
+    monkeypatch.setenv("BENCH_TEST_HUB", str(tmp_path / "other"))
+    monkeypatch.delenv("BENCH_TEST_UNSET", raising=False)
+    _plant_revision(tmp_path / "given" / hub, "a" * 40)
+    _plant_revision(tmp_path / "other" / hub, "b" * 40)
+    environ = {name: value, "BENCH_TEST_HUB": str(tmp_path / "given")}
+    assert script.model_revision("mflux-community/z-image-base-mflux-q4", environ) == "a" * 40
+
+
+@pytest.mark.parametrize(
+    ("env", "hub"),
+    [
+        pytest.param({"HF_HUB_CACHE": "", "HF_HOME": "{tmp}/hf-home"}, ".", id="empty-hf-hub-cache"),
+        pytest.param({"HF_HOME": "", "XDG_CACHE_HOME": "{tmp}/xdg"}, "hub", id="empty-hf-home"),
+    ],
+)
+def test_model_revision_reads_an_empty_cache_variable_as_huggingface_hub_does(
+    script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: dict[str, str], hub: str
+) -> None:
+    """Bug: an empty HF_HUB_CACHE (or HF_HOME) is read as unset, so the revision comes from the next rule's folder,
+    while huggingface_hub uses the empty value as it is: a path relative to the current folder."""
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
+    _plant_revision(cwd / hub, "c" * 40)
+    _plant_revision(tmp_path / "hf-home" / "hub", "d" * 40)
+    _plant_revision(tmp_path / "xdg" / "huggingface" / "hub", "e" * 40)
+    environ = {key: value.format(tmp=tmp_path) for key, value in env.items()}
+    assert script.model_revision("mflux-community/z-image-base-mflux-q4", environ) == "c" * 40
+
+
+# Each environment the _hub_cache tests above use, "{tmp}" standing for the test's temporary folder.
+HUB_CACHE_ENVIRONMENTS = [
+    {"HF_HUB_CACHE": "{tmp}/hub-cache"},
+    {"HUGGINGFACE_HUB_CACHE": "{tmp}/legacy"},
+    {"HF_HOME": "{tmp}/hf-home"},
+    {"XDG_CACHE_HOME": "{tmp}/xdg"},
+    {},
+    {"HF_HUB_CACHE": "$BENCH_TEST_HUB/hub-cache", "BENCH_TEST_HUB": "{tmp}/given"},
+    {"HF_HUB_CACHE": "${BENCH_TEST_HUB}/hub-cache", "BENCH_TEST_HUB": "{tmp}/given"},
+    {"HUGGINGFACE_HUB_CACHE": "$BENCH_TEST_HUB/legacy", "BENCH_TEST_HUB": "{tmp}/given"},
+    {"HF_HOME": "$BENCH_TEST_HUB/hf-home", "BENCH_TEST_HUB": "{tmp}/given"},
+    {"XDG_CACHE_HOME": "$BENCH_TEST_HUB/xdg", "BENCH_TEST_HUB": "{tmp}/given"},
+    {"HF_HUB_CACHE": "$BENCH_TEST_HUB/$BENCH_TEST_UNSET", "BENCH_TEST_HUB": "{tmp}/given"},
+    {"HF_HUB_CACHE": "", "HF_HOME": "{tmp}/hf-home"},
+    {"HF_HOME": "", "XDG_CACHE_HOME": "{tmp}/xdg"},
+    {"HF_HUB_CACHE": "{tmp}/hub-cache", "HUGGINGFACE_HUB_CACHE": "{tmp}/legacy"},
+]
+
+
+@pytest.mark.parametrize("env", HUB_CACHE_ENVIRONMENTS, ids=lambda env: ",".join(env) or "none")
+def test_the_hub_cache_folder_is_the_one_huggingface_hub_itself_reads(
+    script: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: dict[str, str]
+) -> None:
+    """Bug: _hub_cache follows a reading of huggingface_hub's rules that the library does not share (a variable's
+    precedence, the empty-value case, the XDG suffix), so the record names a snapshot from a folder the command never
+    read; here huggingface_hub.constants itself answers, in a fresh offline process with only that environment."""
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    environ = {key: value.replace("{tmp}", str(tmp_path)) for key, value in env.items()}
+    code = "import huggingface_hub.constants as c; print(c.HF_HUB_CACHE)"
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        cwd=tmp_path,
+        env={"HOME": str(home), "HF_HUB_OFFLINE": "1", **environ},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert Path(done.stdout.removesuffix("\n")) == script._hub_cache(environ)

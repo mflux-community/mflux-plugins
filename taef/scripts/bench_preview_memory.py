@@ -514,7 +514,7 @@ def child_main(argv: Sequence[str]) -> int:
     parser.add_argument("--command", required=True)
     parser.add_argument("--entry", required=True)
     parser.add_argument("--ceiling-gib", type=float, default=None)
-    parser.add_argument("--wall-backstop-s", type=float, required=True)
+    parser.add_argument("--wall-backstop-s", type=_positive_seconds, required=True)
     ns = parser.parse_args(argv[:cut])
     args = list(argv[cut + 1 :])
     os.environ["HF_HUB_OFFLINE"] = "1"  # before anything imports huggingface_hub
@@ -523,7 +523,16 @@ def child_main(argv: Sequence[str]) -> int:
 
     import mlx.core as mx
 
-    ceiling = resolve_ceiling_bytes(ns.ceiling_gib, mx.device_info())  # before the command loads anything
+    info = mx.device_info()
+    ceiling = resolve_ceiling_bytes(ns.ceiling_gib, info)  # before the command loads anything
+    bound = resolve_ceiling_bytes(None, info)
+    if ceiling > bound:
+        print(
+            f"bench_preview_memory.py _child: error: --ceiling-gib {ns.ceiling_gib} is above this machine's bound of "
+            f"{bound / GiB:.2f} GiB (memory size minus 4 GiB, or MLX's recommended working set when smaller)",
+            file=sys.stderr,
+        )
+        return 2
     record: dict[str, Any] = {
         "unit": ns.unit,
         "started_utc": started_utc,
@@ -551,9 +560,13 @@ def child_main(argv: Sequence[str]) -> int:
     finisher = RecordFinisher(record, ns.record, measure=measure)
 
     def trip(info: dict[str, Any]) -> None:
-        """Writes the abort record (on disk, fsync'd) and exits 3; exits 3 also when the write fails."""
+        """Writes the abort record (on disk, fsync'd) and exits 3; exits 3 also when the write fails. A stderr that
+        cannot be written does not cost the record."""
         try:
-            print(f"[watchdog] {json.dumps(info)}", file=sys.stderr, flush=True)
+            try:
+                print(f"[watchdog] {json.dumps(info)}", file=sys.stderr, flush=True)
+            except BaseException:  # noqa: BLE001 -- the message is lost; the record below still says why
+                pass
             finisher.finish("aborted", 3, abort=info)
         except BaseException as exc:  # noqa: BLE001 -- say why, then exit 3 in the finally
             print(f"[watchdog] could not write the abort record: {exc!r}", file=sys.stderr, flush=True)
@@ -680,24 +693,43 @@ def image_pixels_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+_VARIABLE = re.compile(r"\$(\w+|\{[^}]*\})", re.ASCII)
+
+
+def _expandvars(path: str, environ: Mapping[str, str]) -> str:
+    """os.path.expandvars with `environ` in place of os.environ: $NAME and ${NAME} become the value, an unknown name
+    stays as written."""
+
+    def value(match: re.Match[str]) -> str:
+        name = match[1][1:-1] if match[1].startswith("{") else match[1]
+        return environ.get(name, match[0])
+
+    return _VARIABLE.sub(value, path)
+
+
 def _hub_cache(environ: Mapping[str, str]) -> Path:
     """The folder huggingface_hub reads its model cache from, by its own rules (huggingface_hub.constants):
     HF_HUB_CACHE, else HUGGINGFACE_HUB_CACHE, else HF_HOME/hub, else $XDG_CACHE_HOME/huggingface/hub, else
-    ~/.cache/huggingface/hub."""
-    for name in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"):
-        if environ.get(name):
-            return Path(os.path.expandvars(environ[name])).expanduser()
-    home = environ.get("HF_HOME") or os.path.join(environ.get("XDG_CACHE_HOME") or "~/.cache", "huggingface")
-    return Path(os.path.expandvars(home)).expanduser() / "hub"
+    ~/.cache/huggingface/hub. As there, a variable that is set counts even when empty, and "~" then $NAME are
+    expanded, the variables from `environ`."""
+
+    def expand(path: str) -> str:
+        return _expandvars(os.path.expanduser(path), environ)
+
+    xdg = environ.get("XDG_CACHE_HOME", os.path.join(os.path.expanduser("~"), ".cache"))
+    home = expand(environ.get("HF_HOME", os.path.join(xdg, "huggingface")))
+    return Path(expand(environ.get("HF_HUB_CACHE", environ.get("HUGGINGFACE_HUB_CACHE", os.path.join(home, "hub")))))
 
 
 _REVISION = re.compile(r"[0-9a-f]{40}")
 
 
-def model_revision(repo: str, environ: Mapping[str, str]) -> str | None:
+def model_revision(repo: str, environ: Mapping[str, str], *, cwd: Path | None = None) -> str | None:
     """The snapshot hash the local cache's refs/main names for `repo`: a plain file read, never a Hub call. None when
-    there is no such file or it holds no commit hash."""
-    path = _hub_cache(environ) / f"models--{repo.replace('/', '--')}" / "refs" / "main"
+    there is no such file or it holds no commit hash. A relative cache folder is read from `cwd`, the folder the
+    command ran in (by default this process's current folder)."""
+    hub = _hub_cache(environ) if cwd is None else cwd / _hub_cache(environ)
+    path = hub / f"models--{repo.replace('/', '--')}" / "refs" / "main"
     try:
         text = path.read_text(encoding="utf-8").strip()
     except (OSError, UnicodeDecodeError):
@@ -755,7 +787,11 @@ def unit_outcome(
     if rc == 3 and child_status == "aborted":
         return "aborted", None
     if rc == 3 and child_status is None:  # the command's own exit 3 always gets a "failed" record from the child
-        return "aborted", "exit 3 without a record: the watchdog stopped the unit and could not write its record"
+        return "aborted", (
+            "the watchdog stopped the unit (a trip whose record could not be written, or the watchdog itself failed)"
+        )
+    if rc == 3 and child_status == "ok":
+        return "failed", "the watchdog tripped after the record was written"
     if rc != 0 or child_status != "ok":
         return "failed", None
     if not image_exists:
@@ -823,7 +859,12 @@ def run_unit(
             _kill_group(proc, keep_group=keep_group)  # without keep_group, also what the child left behind
     rc = proc.returncode
     child_record = unit_dir / "child-record.json"
-    record: dict[str, Any] = json.loads(child_record.read_text()) if child_record.exists() else {}
+    try:
+        loaded = json.loads(child_record.read_text()) if child_record.exists() else {}
+    except (OSError, ValueError):  # unreadable or not JSON: no child record
+        loaded = {}
+    # Anything but a JSON object is not the child's record either; the unit then gets its problem record below.
+    record: dict[str, Any] = loaded if isinstance(loaded, dict) else {}
     image = unit_dir / IMAGE_NAME
     image_exists = image.is_file() and not image.is_symlink()
     digest = image_pixels_sha256(image) if image_exists else None
@@ -833,7 +874,7 @@ def run_unit(
         exit_code=rc,
         log=f"{unit.name}/log.txt",
         image_pixels_sha256=digest,
-        model_revision=model_revision(MODELS[unit.model].repo, os.environ),
+        model_revision=model_revision(MODELS[unit.model].repo, os.environ, cwd=out_dir),
         preview_check=preview,
     )
     kind, reason = unit_outcome(
@@ -861,8 +902,12 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 
 
 def _is_number(value: object) -> bool:
-    """An int or a finite float; never a bool, NaN or an infinity (JSON readers accept those)."""
-    return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    """An int or a finite float; never a bool, NaN or an infinity (JSON readers accept those), nor an int too large
+    for a float."""
+    try:
+        return isinstance(value, int | float) and not isinstance(value, bool) and math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 # Each known arm and the (model, setting, variant) it is made of.
@@ -902,7 +947,7 @@ def check_record(path: Path, rec: object) -> dict[str, Any]:
 def read_record(path: Path) -> dict[str, Any]:
     try:
         rec = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
         raise BenchError(f"{path}: {exc}") from None
     return check_record(path, rec)
 
@@ -1112,6 +1157,20 @@ def _positive_int(text: str) -> int:
     return value
 
 
+def _ceiling_gib(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f"must be a finite number of GiB above 0 (got {text!r})")
+    return value
+
+
+def _positive_seconds(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError(f"must be a finite number of seconds above 0 (got {text!r})")
+    return value
+
+
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="bench_preview_memory.py",
@@ -1131,14 +1190,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument("--reps", type=_positive_int, default=3, help="reps per arm (default: 3)")
     parser.add_argument(
         "--ceiling-gib",
-        type=float,
+        type=_ceiling_gib,
         default=None,
         help="stop a unit when MLX active + cache memory reaches this many GiB (default: the smaller of the machine's "
         "memory size minus 4 GiB and MLX's recommended working set)",
     )
     parser.add_argument(
         "--wall-backstop-s",
-        type=float,
+        type=_positive_seconds,
         default=None,
         help="stop a unit after this many seconds (default: 600 Turbo, 900 Base)",
     )
