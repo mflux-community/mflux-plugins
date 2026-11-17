@@ -121,9 +121,69 @@ Both flags are mflux's own options and apply to the plain mflux command too. Onc
 1 GB. On a single-seed run, `--low-ram` also frees the transformer before the final decode. Nothing changes by default:
 you choose the flag.
 
-When the image is 1024×1024 pixels or larger in total (mflux's default size included) and you gave neither flag, the
-commands print one line on stderr before the weights load, once per run. It names the two flags, points to this section
-and sets nothing for you.
+When the image is 1024×1024 pixels or larger in total (mflux's default size included) and you gave neither flag,
+the TAEF commands print one line on stderr before the weights load, once per run. It names the two flags, points to
+this section and sets nothing for you.
+
+Footprint here means the peak physical memory of the generating process as macOS counts it, model load included. The
+table gives it in GiB for the plain mflux command and the TAEF command, and the difference between them. Each row runs
+both commands with the same setting.
+
+| Model | Setting | Plain command | TAEF command | Preview adds |
+|---|---|---|---|---|
+| Turbo | no flag | 9.15 | 11.48 | +2.33 |
+| Turbo | `--low-ram` | 5.63 | 6.58 | +0.95 |
+| Turbo | `--mlx-cache-limit-gb 1` | 5.64 | 6.58 | +0.94 |
+| Base | no flag | 8.28 | 10.43 | +2.15 |
+| Base | `--low-ram` | 5.89 | 6.59 | +0.69 |
+| Base | `--mlx-cache-limit-gb 1` | 5.89 | 6.59 | +0.69 |
+
+With no flag the preview adds 2.1 to 2.3 GiB. With either flag it adds under 1 GiB. A TAEF command with either flag
+peaks below the plain command with no flag (6.58 and 6.59 GiB against 8.28 and 9.15), and either flag also lowers the
+plain command. The saved image had identical pixels with and without the preview in every setting. In the medians the
+preview added 1 to 2 seconds per run.
+
+With no flag, nearly all of the extra is MLX's cache: its peak rose by 2.1 to 2.3 GiB, about the size of the footprint
+rise. Most likely these are the preview decoder's freed buffers. With either flag the MLX cache peak rose by about
+0.2 GiB, and MLX's peak during generation rose by 0.7 to 0.9 GiB. These two figures do not add up to the footprint
+rise (0.7 to 0.95 GiB); this run did not time them or break that rise down further. The cache peak
+covers the whole process, and mflux applies the 1 GB limit after the model loads, so the recorded peak can sit a little
+above 1 GB.
+
+The figures come from an Apple M1 Max with 32 GB, macOS 27.2.1, Python 3.13.12, MLX 0.32.3, mflux 0.24.0, mlx-taef
+0.9.0 and mflux-taef 0.1.0 plus the unreleased stderr note, at commit
+[`ca9df95`](https://github.com/mflux-community/mflux-plugins/commit/ca9df952d388f16fe7c1701ef9b8671de56dac51). This
+repository differs from that commit only in the script's input checks, its error paths and how it looks up the
+model revision in the cache, and in the wording of the stderr note; nothing on the measured path changed. The run went
+overnight from 2026-11-16 to 2026-11-17 (the summary file gives the first and last start times in UTC) with
+`--ceiling-gib 20`, a 20 GiB limit for the script's watchdog. The script's default is the lower of memory minus 4
+GiB and MLX's recommended working set. Every run was 1024×1024, 8 steps, seed 42, with the prompt "a red apple on
+a wooden table", in one cold process per run, model load included. Turbo is
+`mflux-community/z-image-turbo-mflux-q4`. Base is `mflux-community/z-image-base-mflux-q4` with
+`--base-model z-image --guidance 4.0`. Each setting ran 3 times, and the table shows medians. The differences are taken
+before rounding, so one can differ by 0.01 from the difference of the two displayed cells. The run's logs and images
+are not included. The summary and the records of every run:
+
+- https://github.com/mflux-community/mflux-plugins/blob/main/taef/benchmarks/preview-memory-2026-11-17/summary.txt
+- https://github.com/mflux-community/mflux-plugins/tree/main/taef/benchmarks/preview-memory-2026-11-17/records/
+
+### To measure it yourself
+
+The [benchmark script](https://github.com/mflux-community/mflux-plugins/blob/main/taef/scripts/bench_preview_memory.py)
+runs both commands on your machine. From the `taef/` folder of a checkout:
+
+```bash
+uv run python scripts/bench_preview_memory.py --out RUN_DIR --dry-run
+uv run python scripts/bench_preview_memory.py --out RUN_DIR
+uv run python scripts/bench_preview_memory.py --summarize RUN_DIR
+```
+
+The script picks a watchdog limit that fits your machine; the run above used `--ceiling-gib 20`.
+
+The first command lists the runs and the time they will take without starting any, and loads no model. The
+real run loads both models with downloads switched off, so first download both models and run either TAEF command
+once to put the decoder in place. The full set is 36 runs. On the machine above it took about 78 minutes. Turbo runs
+took 87 to 89 seconds after the first, which took 95, and Base runs took 166 to 168 seconds.
 
 ## What the command checks
 

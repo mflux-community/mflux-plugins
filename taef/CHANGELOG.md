@@ -12,6 +12,11 @@ All notable changes to this plugin are listed here. The format follows
   and neither `--low-ram` nor `--mlx-cache-limit-gb` was given. It names the two flags. No default changes and no
   memory limit is set.
 
+### Changed
+
+- The README gives the preview's measured memory at 1024×1024 for both commands, with the run's records in
+  `benchmarks/`.
+
 ## [0.1.0] - 2026-11-09
 
 ### Added

@@ -1,0 +1,42 @@
+Machine: Apple M1 Max, 32 GiB, macOS 27.2.1
+Versions: mflux 0.24.0, mlx 0.32.3, mlx-taef 0.9.0, mflux-taef 0.1.0
+Commit: ca9df952d388f16fe7c1701ef9b8671de56dac51
+Model revision: turbo f427e257d8e6ffa03edd4d9ac554a05809da456c; base 087eaf40738482a1a99394ce1b490ab12738c1f6
+Dirty files: none
+Started (UTC): 2026-11-16T23:42:20+00:00 to 2026-11-17T00:57:29+00:00
+Records: 36
+
+Footprint: the lifetime peak physical footprint of each generating process (proc_pid_rusage), model load included.
+MLX peak since last reset: mflux resets MLX's peak counter after the model loads under --low-ram and --mlx-cache-limit-gb, so there it covers the generation only; with mflux's defaults it covers the whole process. Compare plain with TAEF within one setting, not across settings.
+MLX cache peak: the highest MLX cache the watchdog saw, sampled every 0.05 s.
+Wall: one cold process per run, model load included (no warm-up).
+
+Medians per arm:
+  turbo-default-plain: n=3 (3 with a footprint), footprint 9.15 GiB, MLX peak since last reset 4.18 GiB, MLX cache peak 8.60 GiB, wall 87.0 s
+  turbo-default-taef: n=3 (3 with a footprint), footprint 11.48 GiB, MLX peak since last reset 5.11 GiB, MLX cache peak 10.90 GiB, wall 88.8 s
+  turbo-low-ram-plain: n=3 (3 with a footprint), footprint 5.63 GiB, MLX peak since last reset 4.18 GiB, MLX cache peak 1.01 GiB, wall 87.5 s
+  turbo-low-ram-taef: n=3 (3 with a footprint), footprint 6.58 GiB, MLX peak since last reset 5.11 GiB, MLX cache peak 1.17 GiB, wall 88.7 s
+  turbo-cache-1-plain: n=3 (3 with a footprint), footprint 5.64 GiB, MLX peak since last reset 4.18 GiB, MLX cache peak 1.01 GiB, wall 87.0 s
+  turbo-cache-1-taef: n=3 (3 with a footprint), footprint 6.58 GiB, MLX peak since last reset 5.11 GiB, MLX cache peak 1.17 GiB, wall 88.7 s
+  base-default-plain: n=3 (3 with a footprint), footprint 8.28 GiB, MLX peak since last reset 4.43 GiB, MLX cache peak 7.72 GiB, wall 166.0 s
+  base-default-taef: n=3 (3 with a footprint), footprint 10.43 GiB, MLX peak since last reset 5.10 GiB, MLX cache peak 9.85 GiB, wall 167.5 s
+  base-low-ram-plain: n=3 (3 with a footprint), footprint 5.89 GiB, MLX peak since last reset 4.42 GiB, MLX cache peak 0.99 GiB, wall 166.5 s
+  base-low-ram-taef: n=3 (3 with a footprint), footprint 6.59 GiB, MLX peak since last reset 5.10 GiB, MLX cache peak 1.17 GiB, wall 167.9 s
+  base-cache-1-plain: n=3 (3 with a footprint), footprint 5.89 GiB, MLX peak since last reset 4.42 GiB, MLX cache peak 0.99 GiB, wall 166.3 s
+  base-cache-1-taef: n=3 (3 with a footprint), footprint 6.59 GiB, MLX peak since last reset 5.10 GiB, MLX cache peak 1.17 GiB, wall 167.9 s
+
+TAEF minus plain (medians):
+  turbo default (n plain/TAEF 3/3, with a footprint 3/3): footprint +2.33 GiB, MLX peak since last reset +0.92 GiB, MLX cache peak +2.30 GiB, wall +1.8 s
+  turbo low-ram (n plain/TAEF 3/3, with a footprint 3/3): footprint +0.95 GiB, MLX peak since last reset +0.92 GiB, MLX cache peak +0.16 GiB, wall +1.1 s
+  turbo cache-1 (n plain/TAEF 3/3, with a footprint 3/3): footprint +0.94 GiB, MLX peak since last reset +0.92 GiB, MLX cache peak +0.16 GiB, wall +1.6 s
+  base default (n plain/TAEF 3/3, with a footprint 3/3): footprint +2.15 GiB, MLX peak since last reset +0.67 GiB, MLX cache peak +2.13 GiB, wall +1.5 s
+  base low-ram (n plain/TAEF 3/3, with a footprint 3/3): footprint +0.69 GiB, MLX peak since last reset +0.68 GiB, MLX cache peak +0.18 GiB, wall +1.4 s
+  base cache-1 (n plain/TAEF 3/3, with a footprint 3/3): footprint +0.69 GiB, MLX peak since last reset +0.68 GiB, MLX cache peak +0.18 GiB, wall +1.6 s
+
+Output images (sha256 of the pixels) per model and setting:
+  turbo default: one image digest across 3 plain and 3 TAEF images
+  turbo low-ram: one image digest across 3 plain and 3 TAEF images
+  turbo cache-1: one image digest across 3 plain and 3 TAEF images
+  base default: one image digest across 3 plain and 3 TAEF images
+  base low-ram: one image digest across 3 plain and 3 TAEF images
+  base cache-1: one image digest across 3 plain and 3 TAEF images
