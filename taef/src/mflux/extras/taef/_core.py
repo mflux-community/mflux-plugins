@@ -348,8 +348,8 @@ def memory_notice(command: str, args: Namespace) -> str | None:
         return None
     width, height = size
     return (
-        f"{command}: note: at {width}x{height} the live preview uses extra memory. Add --low-ram or "
-        '--mlx-cache-limit-gb 1 to keep it small (see "Memory at 1024×1024" in the mflux-taef README).'
+        f"{command}: note: at {width}x{height} the live preview uses extra memory. --low-ram or "
+        '--mlx-cache-limit-gb 1 lowers that extra memory (see "Memory at 1024×1024" in the mflux-taef README).'
     )
 
 
