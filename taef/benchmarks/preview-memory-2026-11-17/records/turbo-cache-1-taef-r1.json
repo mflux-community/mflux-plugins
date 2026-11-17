@@ -1,0 +1,63 @@
+{
+  "unit": "turbo-cache-1-taef-r1",
+  "started_utc": "2026-11-16T23:50:01+00:00",
+  "git_commit": "ca9df952d388f16fe7c1701ef9b8671de56dac51",
+  "git_dirty_files": [],
+  "command": "mflux-generate-z-image-turbo-taef",
+  "argv": [
+    "--model",
+    "mflux-community/z-image-turbo-mflux-q4",
+    "--prompt",
+    "a red apple on a wooden table",
+    "--steps",
+    "8",
+    "--seed",
+    "42",
+    "--width",
+    "1024",
+    "--height",
+    "1024",
+    "--output",
+    "turbo-cache-1-taef-r1/image.png",
+    "--mlx-cache-limit-gb",
+    "1"
+  ],
+  "entry": "mflux.extras.taef.z_image_turbo:main",
+  "versions": {
+    "python": "3.13.12",
+    "mflux": "0.24.0",
+    "mlx": "0.32.3",
+    "mlx-taef": "0.9.0",
+    "mflux-taef": "0.1.0"
+  },
+  "hardware": {
+    "chip": "Apple M1 Max",
+    "memory_bytes": 34359738368,
+    "macos": "27.2.1"
+  },
+  "ceiling_bytes": 21474836480,
+  "pid": 6413,
+  "status": "ok",
+  "exit_code": 0,
+  "wall_s": 88.67671975001576,
+  "mlx_peak_since_last_reset_bytes": 5483225526,
+  "mlx_cache_peak_bytes": 1249313310,
+  "mlx_cache_at_exit_bytes": 1004881304,
+  "footprint_lifetime_peak_bytes": 7069685040,
+  "arm": "turbo-cache-1-taef",
+  "model": "turbo",
+  "setting": "cache-1",
+  "variant": "taef",
+  "rep": 1,
+  "log": "turbo-cache-1-taef-r1/log.txt",
+  "image_pixels_sha256": "a23d652518cee05cf6421132754b95d0a87669a951023f1987d4655b7cef01a5",
+  "model_revision": "f427e257d8e6ffa03edd4d9ac554a05809da456c",
+  "preview_check": {
+    "file": "turbo-cache-1-taef-r1/image.preview.png",
+    "exists": true,
+    "written_after_start": true,
+    "log_says_failed": false,
+    "ok": true,
+    "reason": null
+  }
+}
