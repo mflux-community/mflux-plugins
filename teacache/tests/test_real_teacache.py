@@ -56,12 +56,14 @@ def test_the_predict_closure_is_the_only_holder_of_the_transformer() -> None:
 
 
 def _run_with_the_real_library(run_command, monkeypatch, tmp_path: Path, **extra_kwargs):
-    """Runs the command on LoopingFakeZImage with the real apply_teacache, passing extra_kwargs to it on top of what
-    run() passes. Returns the model, the one handle and the image's JSON sidecar."""
+    """Runs the command on LoopingFakeZImage with the real apply_teacache, passing it what run() passes merged with
+    extra_kwargs (an extra_kwargs key replaces run()'s, and only one run() left as None). Returns the model, the one
+    handle and the image's JSON sidecar."""
     applied: list[tuple[LoopingFakeZImage, mlx_teacache.TeaCacheHandle]] = []
 
     def apply_and_keep(flux, **kwargs):
-        handle = mlx_teacache.apply_teacache(flux, **kwargs, **extra_kwargs)
+        assert all(kwargs.get(k) is None for k in extra_kwargs if k in kwargs), kwargs
+        handle = mlx_teacache.apply_teacache(flux, **{**kwargs, **extra_kwargs})
         applied.append((flux, handle))
         return handle
 
@@ -97,15 +99,17 @@ def test_the_skipped_steps_the_real_library_decides_are_the_ones_the_image_recor
     run_command, monkeypatch, tmp_path: Path
 ) -> None:
     """Bug: the record counts a label the real gate never writes for a skipped step, so every image says it skipped
-    0 steps. Caller coefficients are not clamped to a calibrated range: a polynomial that predicts almost no change
-    keeps the accumulator under the threshold, so the real gate skips most steps between the forced first and last
-    (forced, computed, skipped, skipped, skipped, forced on mlx-teacache 0.16.0)."""
+    0 steps; or the real gate computes a step these settings let it skip. Caller coefficients are not clamped to a
+    calibrated range: a polynomial that predicts almost no change keeps the accumulator under the 0.20 threshold
+    passed with it, so the real gate skips every step between the forced first and last except the one that seeds the
+    cache. The test checks the whole decision list (forced, computed, skipped, skipped, skipped, forced on
+    mlx-teacache 0.16.0 and 0.18.0) and that the image records its 3 skipped steps."""
     _, handle, recorded = _run_with_the_real_library(
-        run_command, monkeypatch, tmp_path, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4)
+        run_command, monkeypatch, tmp_path, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4), rel_l1_thresh=0.20
     )
     decisions = [step.decision for step in handle.stats.last_generation.decisions]
-    assert decisions.count("skipped") > 0, decisions
-    assert recorded["teacache_skipped_steps"] == decisions.count("skipped")
+    assert decisions == ["forced", "computed", "skipped", "skipped", "skipped", "forced"], decisions
+    assert recorded["teacache_skipped_steps"] == 3
     assert recorded["teacache_active_steps"] == 6
 
 
@@ -228,13 +232,14 @@ def _run_qwen_with_the_real_library(
     on_apply: Any = None,
     **extra_kwargs: Any,
 ) -> tuple[LoopingFakeQwenImage, mlx_teacache.TeaCacheHandle, Path]:
-    """Runs the Qwen command on LoopingFakeQwenImage with the real apply_teacache (extra_kwargs on top of what run()
-    passes), then on_apply(model) right after it, before run() registers mflux's callbacks. Returns the model, the one
-    handle and the output path."""
+    """Runs the Qwen command on LoopingFakeQwenImage with the real apply_teacache (what run() passes merged with
+    extra_kwargs; an extra_kwargs key replaces run()'s, and only one run() left as None), then on_apply(model) right
+    after it, before run() registers mflux's callbacks. Returns the model, the one handle and the output path."""
     applied: list[tuple[LoopingFakeQwenImage, mlx_teacache.TeaCacheHandle]] = []
 
     def apply_and_keep(flux, **kwargs):
-        handle = mlx_teacache.apply_teacache(flux, **kwargs, **extra_kwargs)
+        assert all(kwargs.get(k) is None for k in extra_kwargs if k in kwargs), kwargs
+        handle = mlx_teacache.apply_teacache(flux, **{**kwargs, **extra_kwargs})
         applied.append((flux, handle))
         if on_apply is not None:
             on_apply(flux)
@@ -258,13 +263,13 @@ def test_qwen_real_apply_commits_what_the_command_records(run_command, monkeypat
     before the wrapped generate_image commits them, the library records one decision per transformer call (two per
     step), or the image records another variant or threshold than the one the library ran.
 
-    Expected decisions, from mlx-teacache 0.16.0's gate and qwen-image-2512's calibration: step 0 is forced (and only
-    anchors the signal; a forced step caches nothing), step 1 has no cached residual yet so it computes and seeds,
-    step 5 is forced. Steps 2 to 4 price the measured change after clamping it into the calibrated range (0.081,
-    0.471): even at the range floor a step costs 0.038, and a single step reaches the 0.25 default only from a delta
-    near 0.256. On this tiny transformer (fixed seeds, random weights) the modulated block-0 input moves by 0.108,
-    0.115 and 0.126 on steps 2 to 4; the fit prices them 0.060, 0.066 and 0.076, which accumulate to 0.203, under
-    0.25, so all three skip: forced, computed, skipped x3, forced."""
+    Expected decisions, from mlx-teacache's gate and qwen-image-2512's calibration (the same in 0.16.0 and 0.18.0):
+    step 0 is forced (and only anchors the signal; a forced step caches nothing), step 1 has no cached residual yet so
+    it computes and seeds, step 5 is forced. Steps 2 to 4 price the measured change after clamping it into the
+    calibrated range (0.081, 0.471): even at the range floor a step costs 0.038, and a single step reaches the 0.25
+    default only from a delta near 0.256. On this tiny transformer (fixed seeds, random weights) the modulated block-0
+    input moves by 0.108, 0.115 and 0.126 on steps 2 to 4; the fit prices them 0.060, 0.066 and 0.076, which
+    accumulate to 0.203, under 0.25, so all three skip: forced, computed, skipped x3, forced."""
     _, handle, out = _run_qwen_with_the_real_library(run_command, monkeypatch, tmp_path, [*QWEN_ARGV, "--make-conf"])
     recorded = json.loads(out.with_suffix(".metadata.json").read_text())
     assert handle.stats.generations == 1
@@ -291,9 +296,9 @@ def test_both_branches_share_one_decision_and_skip_together(run_command, monkeyp
     """Bug: the negative CFG branch takes its own gate decision, or runs the transformer blocks on a step the positive
     branch skipped, so Qwen's skip saves half of what the record says (or none) and the decisions count two per step.
 
-    With caller coefficients (0, 0, 0, 0, 1e-4) every gated step is priced 1e-4, under the 0.20 threshold mlx-teacache
-    uses for caller coefficients, and nothing clamps it: forced, computed (the seed), skipped x3, forced. Three steps
-    compute, each running both blocks on both branches: 2 x 2 x 3 = 12 block calls."""
+    With caller coefficients (0, 0, 0, 0, 1e-4) every gated step is priced 1e-4, under the 0.20 threshold passed with
+    them, and nothing clamps it: forced, computed (the seed), skipped x3, forced. Three steps compute, each running
+    both blocks on both branches: 2 x 2 x 3 = 12 block calls."""
     block_calls = [0]
     real_call = QwenTransformerBlock.__call__
 
@@ -303,7 +308,7 @@ def test_both_branches_share_one_decision_and_skip_together(run_command, monkeyp
 
     monkeypatch.setattr(QwenTransformerBlock, "__call__", counted)
     _, handle, _ = _run_qwen_with_the_real_library(
-        run_command, monkeypatch, tmp_path, QWEN_ARGV, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4)
+        run_command, monkeypatch, tmp_path, QWEN_ARGV, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4), rel_l1_thresh=0.20
     )
     assert _decisions(handle) == ["forced", "computed", "skipped", "skipped", "skipped", "forced"]
     assert block_calls[0] == 12
