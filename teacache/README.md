@@ -242,8 +242,9 @@ For measured speedups and image comparisons, see the
   `python -W error`, that warning becomes an error.
 
 What was run: the offline tests (fakes and a tiny random transformer, for both models) cover mflux 0.24.0 with
-mlx-teacache 0.16.0. The Qwen-Image runs on real weights on mflux 0.24.0 were measured with mlx-teacache 0.14.0 and
-have not been repeated on 0.16.0. The Z-Image command has only the offline tests on mflux 0.24.
+mlx-teacache 0.16.0, and they also pass on mlx-teacache 0.18.0. The Qwen-Image runs on real weights on mflux 0.24.0
+were measured with mlx-teacache 0.14.0 and have not been repeated on a newer mlx-teacache. The Z-Image command has
+only the offline tests on mflux 0.24.
 
 mflux's other options, `--float32` included, pass through unchanged.
 

@@ -338,8 +338,8 @@ def commit_generation(
     skipped_steps: frozenset[int],
     numerical_miss_step: int | None = None,
 ) -> None:
-    """Records and commits one generation the way mlx-teacache 0.16.0's gate decides it: the first and the last
-    active step are always "forced" (skip_first_n_steps = skip_last_n_steps = 1, _kernel/gate.py), so a
+    """Records and commits one generation the way mlx-teacache's gate (0.16.0 and 0.18.0 alike) decides it: the first
+    and the last active step are always "forced" (skip_first_n_steps = skip_last_n_steps = 1, _kernel/gate.py), so a
     skipped_steps entry there is ignored; then the one numerical miss, the skipped steps, "computed" for the rest."""
     for step in range(active_steps):
         if step == 0 or step == active_steps - 1:
