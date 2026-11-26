@@ -48,27 +48,57 @@ RELEASED_0_24 = "mflux v.0.24.0 released"
 # ZImageTurboCommand.load passes to ZImage, and ZImage.generate_image records it through _generation_parameters().
 # When an mflux release carries this change, that release gets its own label, and this one may then be dropped.
 MAIN_17B47E9 = "mflux main 17b47e9, unreleased, reviewed 2026-11-08"
+# Reviewed: e62f996, against the 17b47e9 values, on CPython 3.13. Since 17b47e9, Z-Image Turbo gained --ssd-stream /
+# --no-ssd-stream (dest ssd_stream, default off, from the shared add_ssd_stream_arguments helper), which
+# ZImageTurboCommand.load passes to ZImage as ssd_stream=args.ssd_stream; load still returns the ZImage after
+# VAEDecodeOptions.apply, so _core.run calls it as before. ZImage.generate_image now builds its step with
+# _predict(transformer, compile_predict=not self.ssd_stream), and _predict leaves the step uncompiled when
+# compile_predict is False or the chip is an M1 or M2. Without --ssd-stream the step is compiled exactly when it was
+# before. With it the step runs eagerly, each streamed block evaluates its own output before it drops its weights,
+# and generate_image still calls the in-loop callbacks after the step, on the latents the scheduler returned: the
+# preview decodes those latents with its own decoder and never reads the transformer, so the option needs no refusal.
+# The Z-Image command, the callback plumbing and the model-path rules did not move.
+MAIN_E62F996 = "mflux main e62f996, unreleased, reviewed 2026-11-26"
 # The versions each reviewed source reports. mflux main still reports 0.24.0.
-REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",)}
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",), MAIN_E62F996: ("0.24.0",)}
 
 # The build_parser digests are parser_fingerprint values: they read the options and helper calls, not the wording of
 # help, help_text, description or epilog, so a reworded --help line moves no pin. Every other digest is ast_fingerprint.
-BUILD_PARSER_DIGESTS = {RELEASED_0_24: "dd5d356295c7d1b3", MAIN_17B47E9: "dd5d356295c7d1b3"}
-MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe"}
+BUILD_PARSER_DIGESTS = {
+    RELEASED_0_24: "dd5d356295c7d1b3",
+    MAIN_17B47E9: "dd5d356295c7d1b3",
+    MAIN_E62F996: "dd5d356295c7d1b3",
+}
+MAIN_DIGESTS = {
+    RELEASED_0_24: "1f3058eda927d0fe",
+    MAIN_17B47E9: "1f3058eda927d0fe",
+    MAIN_E62F996: "1f3058eda927d0fe",
+}
 # ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
 # model) and returns the model.
-LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {
+    RELEASED_0_24: "d91dfaa735845a7b",
+    MAIN_17B47E9: "d91dfaa735845a7b",
+    MAIN_E62F996: "d91dfaa735845a7b",
+}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
 # On mflux main it builds generation_parameters through ZImage._generation_parameters(), which adds
-# "small_text_encoder": True on a model built with the flag; nothing else in it moved.
-GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_17B47E9: "061ebd266b779369"}
+# "small_text_encoder": True on a model built with the flag. On mflux main at e62f996 (the change came with mflux
+# PR 1021) it also passes compile_predict to _predict (see MAIN_E62F996); the record it builds did not move.
+GENERATE_IMAGE_DIGESTS = {
+    RELEASED_0_24: "88204535dc85b78e",
+    MAIN_17B47E9: "061ebd266b779369",
+    MAIN_E62F996: "0f58ac0d9f35cc5f",
+}
 # ZImage._predict, the factory that builds the denoising step, and the chip check that decides whether mflux compiles
-# that step (mx.compile, except on M1 and M2). The preview relies on running outside it: generate_image calls the
-# in-loop callbacks after the step, on the latents it returned. A callback traced into a compiled step would write its
-# preview once, while tracing, and never again.
+# that step (mx.compile, except on M1 and M2, and on mflux main at e62f996 also except with --ssd-stream, a change
+# that came with mflux PR 1021). The preview relies on running outside it: generate_image calls the in-loop callbacks
+# after the step, on the latents it returned. A callback traced into a compiled step would write its preview once,
+# while tracing, and never again.
 PREDICT_DIGESTS = {
     RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
     MAIN_17B47E9: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
+    MAIN_E62F996: ("09a1c99925ad1929", "3264a79fbfa0f1a5"),
 }
 
 # The Z-Image Turbo command's parts. Its main() parses, warns about --vae-tiling and about the options Turbo ignores
@@ -78,9 +108,26 @@ PREDICT_DIGESTS = {
 # On mflux main build_parser adds add_small_text_encoder_arguments (--small-text-encoder / --no-small-text-encoder),
 # and load passes small_text_encoder=args.small_text_encoder to ZImage. The option swaps the text encoder only: it skips
 # no step, and the preview decodes the in-loop latents, not the text encoder's output, so it needs no refusal.
-TURBO_BUILD_PARSER_DIGESTS = {RELEASED_0_24: "6e8eafd85a439db2", MAIN_17B47E9: "d190cdfd477c548e"}
-TURBO_MAIN_DIGESTS = {RELEASED_0_24: "11546c660ef3fb41", MAIN_17B47E9: "11546c660ef3fb41"}
-TURBO_LOAD_DIGESTS = {RELEASED_0_24: "3441d988220ed998", MAIN_17B47E9: "7c89744d5b0f8ce5"}
+# On mflux main at e62f996 (the change came with mflux PR 1021) build_parser also calls add_ssd_stream_arguments
+# (--ssd-stream / --no-ssd-stream), and load passes ssd_stream=args.ssd_stream to ZImage. The option streams the text
+# encoder's layers (the text encoder unless --small-text-encoder) and the transformer's layers from the saved weights
+# and runs the step uncompiled; it skips no step either (see MAIN_E62F996), so it needs no refusal. main()
+# and its part after load() did not move.
+TURBO_BUILD_PARSER_DIGESTS = {
+    RELEASED_0_24: "6e8eafd85a439db2",
+    MAIN_17B47E9: "d190cdfd477c548e",
+    MAIN_E62F996: "0147c9c9f5b642e4",
+}
+TURBO_MAIN_DIGESTS = {
+    RELEASED_0_24: "11546c660ef3fb41",
+    MAIN_17B47E9: "11546c660ef3fb41",
+    MAIN_E62F996: "11546c660ef3fb41",
+}
+TURBO_LOAD_DIGESTS = {
+    RELEASED_0_24: "3441d988220ed998",
+    MAIN_17B47E9: "7c89744d5b0f8ce5",
+    MAIN_E62F996: "1a9a1a740a1d4f6d",
+}
 # Per pinned Turbo part: the function, the fingerprint its values are, its recorded values, and what to bring in line
 # when it moves.
 TURBO_PINS = {
@@ -112,17 +159,17 @@ TURBO_PINS = {
 CALLBACK_PINS = {
     "GenerationContext.in_loop": (
         GenerationContext.in_loop,
-        {RELEASED_0_24: "22531d11c18f9662", MAIN_17B47E9: "22531d11c18f9662"},
+        {RELEASED_0_24: "22531d11c18f9662", MAIN_17B47E9: "22531d11c18f9662", MAIN_E62F996: "22531d11c18f9662"},
         "FakeLivePreview.call_in_loop and the order tests in tests/test_run.py",
     ),
     "CallbackRegistry.register": (
         CallbackRegistry.register,
-        {RELEASED_0_24: "88aa95a1710be75f", MAIN_17B47E9: "88aa95a1710be75f"},
+        {RELEASED_0_24: "88aa95a1710be75f", MAIN_17B47E9: "88aa95a1710be75f", MAIN_E62F996: "88aa95a1710be75f"},
         "_core.run, which registers the preview on model.callbacks first",
     ),
     "CallbackManager.register_callbacks": (
         CallbackManager.register_callbacks,
-        {RELEASED_0_24: "ffeeb63f7a540385", MAIN_17B47E9: "ffeeb63f7a540385"},
+        {RELEASED_0_24: "ffeeb63f7a540385", MAIN_17B47E9: "ffeeb63f7a540385", MAIN_E62F996: "ffeeb63f7a540385"},
         "_core.run, which registers the preview before this call so it runs ahead of mflux's callbacks",
     ),
 }
@@ -145,11 +192,26 @@ PATH_RESOLUTION_RULES = {
         (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
         (4, "error", "always", "Path not found"),
     ],
+    MAIN_E62F996: [
+        (0, "none", "is_none", "Use local filesystem path"),
+        (1, "local", "exists_locally", "Use local filesystem path"),
+        (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
+        (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
+        (4, "error", "always", "Path not found"),
+    ],
 }
 # PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
 # names the rules, not what they do; these two pin that.
-PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_17B47E9: "b0f9ed4e22018374"}
-PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_17B47E9: "c7fd6091bc7ea323"}
+PATH_RESOLUTION_CHECK_DIGESTS = {
+    RELEASED_0_24: "b0f9ed4e22018374",
+    MAIN_17B47E9: "b0f9ed4e22018374",
+    MAIN_E62F996: "b0f9ed4e22018374",
+}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {
+    RELEASED_0_24: "c7fd6091bc7ea323",
+    MAIN_17B47E9: "c7fd6091bc7ea323",
+    MAIN_E62F996: "c7fd6091bc7ea323",
+}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
@@ -171,7 +233,11 @@ DESTS = (
     "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
     "width",
 )  # fmt: skip
-OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_17B47E9: (OPTION_STRINGS, DESTS)}
+OPTIONS = {
+    RELEASED_0_24: (OPTION_STRINGS, DESTS),
+    MAIN_17B47E9: (OPTION_STRINGS, DESTS),
+    MAIN_E62F996: (OPTION_STRINGS, DESTS),
+}
 # The Z-Image Turbo parser has the same option strings and dests in 0.24.0 (its image helpers take other arguments,
 # which its build_parser digest pins). On mflux main it has --small-text-encoder and --no-small-text-encoder on top, both
 # with the dest small_text_encoder.
@@ -194,9 +260,31 @@ TURBO_DESTS_17B47E9 = (
     "seed", "small_text_encoder", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size",
     "vae_tiling", "verbose", "width",
 )  # fmt: skip
+# On mflux main at e62f996 (the change came with mflux PR 1021) it also has --ssd-stream and --no-ssd-stream, both
+# with the dest ssd_stream.
+TURBO_OPTION_STRINGS_E62F996 = (
+    "--auto-seeds", "--bake-lora", "--base-model", "--battery-percentage-stop-limit", "--compute-precision",
+    "--config-from-conf", "--config-from-metadata", "--float32", "--guidance", "--height", "--help", "--image",
+    "--image-path", "--image-strength", "--lora", "--lora-paths", "--lora-scales", "--lora-style", "--low-ram",
+    "--make-conf", "--metadata", "--mlx-cache-limit-gb", "--model", "--negative-prompt", "--no-bake-lora",
+    "--no-exif", "--no-float32", "--no-metadata", "--no-pid-decode", "--no-small-text-encoder", "--no-ssd-stream",
+    "--no-vae-full-precision", "--output", "--pid-decode", "--pid-degrade-sigma", "--prompt", "--prompt-file",
+    "--quantize", "--scheduler", "--seed", "--small-text-encoder", "--ssd-stream", "--steps",
+    "--stepwise-image-output-dir", "--vae-full-precision", "--vae-tile-size", "--vae-tiling", "--verbose", "--width",
+    "-B", "-C", "-h", "-m", "-q", "-v",
+)  # fmt: skip
+TURBO_DESTS_E62F996 = (
+    "auto_seeds", "bake_lora", "base_model", "battery_percentage_stop_limit", "compute_precision",
+    "config_from_metadata", "float32", "guidance", "height", "help", "image", "image_path", "image_strength", "lora",
+    "lora_paths", "lora_scales", "lora_style", "low_ram", "metadata", "mlx_cache_limit_gb", "model", "negative_prompt",
+    "no_metadata", "output", "pid_decode", "pid_degrade_sigma", "prompt", "prompt_file", "quantize", "scheduler",
+    "seed", "small_text_encoder", "ssd_stream", "steps", "stepwise_image_output_dir", "vae_full_precision",
+    "vae_tile_size", "vae_tiling", "verbose", "width",
+)  # fmt: skip
 TURBO_OPTIONS = {
     RELEASED_0_24: (OPTION_STRINGS, DESTS),
     MAIN_17B47E9: (TURBO_OPTION_STRINGS_17B47E9, TURBO_DESTS_17B47E9),
+    MAIN_E62F996: (TURBO_OPTION_STRINGS_E62F996, TURBO_DESTS_E62F996),
 }
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
@@ -206,12 +294,12 @@ POST_LOAD = {
     "mflux-generate-z-image-taef": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee", MAIN_E62F996: "812cb2e320c4eaee"},
     ),
     "mflux-generate-z-image-turbo-taef": (
         z_image_turbo_generate.main,
         "model = ZImageTurboCommand.load(args)",
-        {RELEASED_0_24: "29bb850d11014ea6", MAIN_17B47E9: "29bb850d11014ea6"},
+        {RELEASED_0_24: "29bb850d11014ea6", MAIN_17B47E9: "29bb850d11014ea6", MAIN_E62F996: "29bb850d11014ea6"},
     ),
 }
 

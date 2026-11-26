@@ -148,11 +148,11 @@ the adapter copies from `main()`. Once for both commands it pins `ZImage.generat
 `GenerationContext.in_loop`, `CallbackRegistry.register` and `CallbackManager.register_callbacks`. It also pins
 mflux's path-resolution rules (`PathResolution.RULES`) and the two functions that act on them (`PathResolution._check`
 and `_execute`), and an offline test checks that the unknown-model refusal and mflux's path resolution agree on which
-names are unresolvable. Each pinned value is
-recorded under a label that names the mflux source it was reviewed against. This package has one label, `mflux v.0.24.0
-released`, with the versions that source reports (`REPORTED_VERSIONS`). A value the label doesn't hold fails, and so
-does an installed mflux whose version the label doesn't list. A new mflux option that starts with `--taef-` would
-collide at `build_parser()`; the option-string pin catches it on mflux `main`.
+names are unresolvable. Each pinned value is recorded under a label that names the mflux source it was reviewed
+against, with the versions that source reports (`REPORTED_VERSIONS`). The test keeps one label per reviewed mflux
+source. A value no label holds fails. So does a mix of values from different labels, and so does an installed mflux
+whose version the matched label does not list. A new mflux option that starts with `--taef-` would collide at
+`build_parser()`; the option-string pin catches it on mflux `main`.
 
 When an mflux update turns it red:
 
