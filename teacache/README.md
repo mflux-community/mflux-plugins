@@ -235,16 +235,23 @@ For measured speedups and image comparisons, see the
 - mflux 0.24 or newer, with no upper limit. 0.24 is the first mflux that imports with Pillow 13, which a fresh
   install picks. On Python 3.10 the installer keeps version 0.1.2 of this package. On mflux 0.23, installing or
   upgrading to this release also upgrades mflux to 0.24; to stay on 0.1.2, pin `mflux-teacache==0.1.2`.
-- mlx-teacache 0.16.0 or newer. Its `[mflux]` extra is `mflux>=0.24`, and it lists mflux 0.24.0 as its newest checked
-  release, so on 0.24.0 there is no warning. On a newer mflux either command runs and prints a warning that the
-  installed mflux is newer than the checked one, and TeaCache still applies. This holds as long as mflux keeps the
-  command steps this package wraps; a daily test against mflux's main branch catches changes. Under
-  `python -W error`, that warning becomes an error.
+- mlx-teacache 0.18.1 or newer. Older mlx-teacache versions stop every Z-Image run with a `TypeError` on an mflux that
+  carries [mflux PR 1021](https://github.com/mflux-community/mflux/pull/1021), which is on mflux's main branch after
+  0.24.0 and in no release as of 2026-11-26. Through this package's command that is a traceback and exit code 1, with
+  no image, after the weights load. What protects you is mlx-teacache 0.18.1 or newer: an environment that upgrades
+  mflux to a release with that change and keeps an older mlx-teacache fails every Z-Image run. Run
+  `pip install -U mflux-teacache`, which brings mlx-teacache 0.18.1 or newer with it. The Qwen-Image command is not
+  affected.
+- mlx-teacache's `[mflux]` extra is `mflux>=0.24`, and 0.18.1 lists mflux 0.24.0 as its newest checked release, so on
+  0.24.0 there is no warning. On a newer mflux either command runs and prints a warning that the installed mflux is
+  newer than the checked one, and TeaCache still applies. This holds as long as mflux keeps the command steps this
+  package wraps; a daily test against mflux's main branch catches changes. Under `python -W error`, that warning
+  becomes an error.
 
 What was run: the offline tests (fakes and a tiny random transformer, for both models) cover mflux 0.24.0 with
-mlx-teacache 0.16.0, and they also pass on mlx-teacache 0.18.0. The Qwen-Image runs on real weights on mflux 0.24.0
-were measured with mlx-teacache 0.14.0 and have not been repeated on a newer mlx-teacache. The Z-Image command has
-only the offline tests on mflux 0.24.
+mlx-teacache 0.18.1, and mflux main at commit e62f996 (2026-11-26) with mlx-teacache 0.18.1. The Qwen-Image runs on real
+weights on mflux 0.24.0 were measured with mlx-teacache 0.14.0 and have not been repeated on a newer mlx-teacache. The
+Z-Image command has only the offline tests.
 
 mflux's other options, `--float32` included, pass through unchanged.
 
