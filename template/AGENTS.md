@@ -91,10 +91,12 @@ that copies more adds its file there.
   run inside mflux's compiled step; `.item()`, `mx.eval` and writes to outside arrays all fail there. On the chips
   that compile, an eager step also changes the speed and, slightly, the output, so measure your plugin against plain
   mflux running the same step eagerly.
-- `_predict` is a factory `(transformer) -> predict`. mflux calls it once per image with its transformer
-  (`predict = self._predict(self.transformer)` in `ZImage.generate_image`) and deletes the step after the loop. Build
-  your step from that `transformer` argument and never close over `model.transformer`, or `--low-ram` keeps the
-  weights alive through the decode. mlx-teacache's `make_teacache_predict_factory` is a worked example.
+- `_predict` is a factory `(transformer, compile_predict=True) -> predict`. mflux calls it once per image as
+  `self._predict(self.transformer)` on 0.24.0 and, on mflux's main branch after 0.24.0 (mflux PR 1021), with a
+  `compile_predict` keyword (`self._predict(self.transformer, compile_predict=not self.ssd_stream)`). A replacement must accept
+  that keyword, or every run raises `TypeError`. mflux deletes the step after the loop. Build your step from the
+  `transformer` argument and never close over `model.transformer`, or `--low-ram` keeps the weights alive through the
+  decode. mlx-teacache's `make_teacache_predict_factory` is a worked example.
 - Don't keep the transformer or step-sized arrays alive in the handle. Holding the model is fine: mflux frees the
   transformer by setting `model.transformer` to `None`. With one seed and `--low-ram` or `--pid-decode`, mflux drops
   the transformer after the denoising loop to free memory before the decode (`mflux/callbacks/callback_manager.py`),
