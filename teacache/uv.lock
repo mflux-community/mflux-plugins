@@ -1088,7 +1088,7 @@ wheels = [
 
 [[package]]
 name = "mflux-teacache"
-version = "0.3.0"
+version = "0.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "mflux" },
@@ -1105,7 +1105,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "mflux", specifier = ">=0.24" },
-    { name = "mlx-teacache", extras = ["mflux"], specifier = ">=0.16.0" },
+    { name = "mlx-teacache", extras = ["mflux"], specifier = ">=0.18.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -1221,15 +1221,15 @@ wheels = [
 
 [[package]]
 name = "mlx-teacache"
-version = "0.16.0"
+version = "0.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mlx", version = "0.32.2", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'linux'" },
     { name = "mlx", version = "0.32.3", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fc/0b/dd4954ff05f9bb2a1287a5bfb899c5a41104a4e7889573c717fca16f177a/mlx_teacache-0.16.0.tar.gz", hash = "sha256:7c3bc99177daf161666926118b14ff288da380b51c44df083b418826e91c94d1", size = 1284221, upload-time = "2026-11-01T20:14:03.557Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/07/21/b0fb99d040c15a6a6c056896520f810253246e832e7c5716b9fee31ba73b/mlx_teacache-0.18.1.tar.gz", hash = "sha256:ac74f89a1d2aca3f472980ca5da681b8197b33bf14cae3352006fd4fc100b0ec", size = 1313626, upload-time = "2026-11-26T12:25:30.099Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/8c/323820f9dcc314a197bcc98444f8079cf9b59a2175de7c6c53de2e696ec1/mlx_teacache-0.16.0-py3-none-any.whl", hash = "sha256:c61699892c7259eb686d338d37510aefdeef11453972d9725e7a08ea6ccb468b", size = 133312, upload-time = "2026-11-01T20:14:01.785Z" },
+    { url = "https://files.pythonhosted.org/packages/b6/03/b1aa6590c8788246a597c89ecc2635cb80d55753d325e8322223399cad01/mlx_teacache-0.18.1-py3-none-any.whl", hash = "sha256:7d5aec64937fe71a2317c797ec9f6658ca8695d647a25a2ceaf5c902cb6eb8ee", size = 141427, upload-time = "2026-11-26T12:25:28.603Z" },
 ]
 
 [package.optional-dependencies]

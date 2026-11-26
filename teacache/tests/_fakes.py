@@ -140,11 +140,16 @@ class FakeZImage:
 
 class LoopingFakeZImage(FakeZImage):
     """A FakeZImage that runs mflux's denoising loop for real: the callback context (start, before_loop,
-    in_loop, after_loop), self._predict(self.transformer), the scheduler steps. The transformer is a tiny real
-    ZImageTransformer with random, never-loaded weights, so the real mlx_teacache.apply_teacache can patch this
-    model, gate every step and commit its stats. The prompt encoding is a fixed random array (no text encoder)."""
+    in_loop, after_loop), self._predict(...) called the way the installed mflux calls it, the scheduler steps. The
+    transformer is a tiny real ZImageTransformer with random, never-loaded weights, so the real
+    mlx_teacache.apply_teacache can patch this model, gate every step and commit its stats. The prompt encoding is a
+    fixed random array (no text encoder).
+
+    ssd_stream is False, as on every model mflux's base Z-Image command loads; mflux after 0.24.0 builds the step with
+    compile_predict=not ssd_stream."""
 
     _predict = staticmethod(ZImage._predict)
+    ssd_stream = False
     CAPTION_DIM = 32
 
     def __init__(self, **kwargs: Any) -> None:
@@ -168,7 +173,12 @@ class LoopingFakeZImage(FakeZImage):
         negative_encodings = text_encodings if config.guidance > 1.0 else None
         ctx = self.callbacks.start(seed=seed, prompt=prompt, config=config)
         ctx.before_loop(latents)
-        predict = self._predict(self.transformer)
+        # mflux 0.24.0 calls self._predict(self.transformer); mflux main after it passes compile_predict as well. The
+        # installed ZImage._predict decides, not self._predict, which mlx-teacache may have replaced.
+        if "compile_predict" in inspect.signature(ZImage._predict).parameters:
+            predict = self._predict(self.transformer, compile_predict=not self.ssd_stream)
+        else:
+            predict = self._predict(self.transformer)
         for t in config.time_steps:
             sigma_t = config.scheduler.sigmas[t].reshape((1,))
             noise = predict(
@@ -338,9 +348,10 @@ def commit_generation(
     skipped_steps: frozenset[int],
     numerical_miss_step: int | None = None,
 ) -> None:
-    """Records and commits one generation the way mlx-teacache's gate (0.16.0 and 0.18.0 alike) decides it: the first
-    and the last active step are always "forced" (skip_first_n_steps = skip_last_n_steps = 1, _kernel/gate.py), so a
-    skipped_steps entry there is ignored; then the one numerical miss, the skipped steps, "computed" for the rest."""
+    """Records and commits one generation the way mlx-teacache 0.18.1's gate decides it: the first and the last active
+    step are always "forced" (apply_teacache's defaults skip_first_n_steps = skip_last_n_steps = 1, which run() keeps;
+    _kernel/gate.py), so a skipped_steps entry there is ignored; then the one numerical miss, the skipped steps,
+    "computed" for the rest."""
     for step in range(active_steps):
         if step == 0 or step == active_steps - 1:
             decision = "forced"
