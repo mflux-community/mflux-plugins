@@ -5,6 +5,7 @@ and nothing is downloaded: conftest points mlx-taef's cache at the test's direct
 below replaces the download step."""
 
 import gc
+import importlib.metadata
 import logging
 import sys
 import weakref
@@ -74,6 +75,30 @@ def real_preview(run_command, random_decoder: Path, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(z_image_turbo_generate, "ZImage", LoopingFakeZImage)
     monkeypatch.setattr(z_image_generate, "ZImage", LoopingFakeZImage)
     return built
+
+
+# --ssd-stream is an option of mflux's own Z-Image Turbo parser on mflux main at e62f996 (it came with mflux PR 1021);
+# the Turbo command reaches it through z_image_turbo_generate.build_parser()
+# and ZImageTurboCommand.load with no plugin code.
+TURBO_HAS_SSD_STREAM = any(
+    "--ssd-stream" in action.option_strings for action in z_image_turbo_generate.build_parser()._actions
+)
+NEEDS_SSD_STREAM = pytest.mark.skipif(
+    not TURBO_HAS_SSD_STREAM,
+    reason=f"mflux {importlib.metadata.version('mflux')} has no --ssd-stream on its Z-Image Turbo command",
+)
+
+
+@NEEDS_SSD_STREAM
+def test_ssd_stream_reaches_the_turbo_model_and_the_preview_is_saved(run_command, real_preview, tmp_path: Path) -> None:
+    """Bug: the Turbo command refuses --ssd-stream or builds its model without it (a load of its own, or a parser
+    that drops the option), so a run that asked to stream the weights from disk loads them all into memory, or the
+    preview stops being written on a run that passes --ssd-stream.
+    The fake model does not stream, so mflux's streamed step itself rests on the drift pins and the label's review."""
+    run_command([*ONE_SEED, "--ssd-stream"], TURBO)
+    (model,) = FakeZImage.instances
+    assert model.init_kwargs["ssd_stream"] is True
+    assert (tmp_path / "o.preview.png").is_file()
 
 
 @pytest.mark.parametrize(

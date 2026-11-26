@@ -673,6 +673,29 @@ def test_failure_after_load_exits_1_with_the_plain_hint(run_command, capsys, ada
     )
 
 
+class ZImageThatRaisesOnLoad(FakeZImage):
+    """mflux's model refusing at build time, as mflux's Z-Image initializer raises ValueError for an unusable option."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        raise ValueError("cannot build this model")
+
+
+@pytest.mark.parametrize(("adapter", "command", "plain"), COMMANDS)
+def test_a_failure_in_mflux_load_raises_its_own_error(
+    run_command, monkeypatch, capsys, adapter, command, plain
+) -> None:
+    """Bug: the plugin turns an error raised while mflux loads the model into a usage refusal (exit 2) or into its own
+    "run failed" line, where the plain mflux command would end with that error's traceback and exit 1."""
+    monkeypatch.setattr(z_image_turbo_generate, "ZImage", ZImageThatRaisesOnLoad)
+    monkeypatch.setattr(z_image_generate, "ZImage", ZImageThatRaisesOnLoad)
+    # A SystemExit (a refusal or the plugin's own exit 1) is not a ValueError, so it fails this check.
+    with pytest.raises(ValueError, match="cannot build this model"):
+        run_command([*PREVIEW_BASE, "--seed", "1"], adapter)
+    err = capsys.readouterr().err
+    assert f"{command}: error:" not in err
+    assert f"Run {plain} to generate without previews." not in err
+
+
 @pytest.mark.parametrize("adapter", ADAPTERS)
 def test_ctrl_c_exits_0_and_saves_nothing(run_command, looping_model, capsys, tmp_path: Path, adapter) -> None:
     """Bug: Ctrl-C in the denoising loop becomes a traceback or exit 1 now that a preview is registered, or an image
