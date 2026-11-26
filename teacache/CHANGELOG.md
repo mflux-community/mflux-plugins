@@ -4,6 +4,26 @@ All notable changes to mflux-teacache are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-26
+
+### Fixed
+
+- The Z-Image command keeps working on any mflux release that includes
+  [mflux PR 1021](https://github.com/mflux-community/mflux/pull/1021). On mflux's main branch after 0.24.0, Z-Image
+  passes an extra argument when it builds each denoising step. mlx-teacache 0.16.0 to 0.18.0 do not accept it, so on
+  that mflux every Z-Image run with TeaCache stopped with a `TypeError` after the weights loaded, before the first
+  step: a traceback and exit code 1, with no image. What protects you is mlx-teacache 0.18.1 or newer: an environment
+  that upgrades mflux to such a release and keeps an older mlx-teacache fails every Z-Image run. Run
+  `pip install -U mflux-teacache`, which brings mlx-teacache 0.18.1 or newer with it.
+
+### Changed
+
+- Requires mlx-teacache 0.18.1 or newer (was 0.16.0), which accepts that argument. This is a floor only. mlx-teacache
+  0.18.1 still needs `mlx>=0.31` and `mflux>=0.24`, and still lists mflux 0.24.0 as its newest checked release.
+- On mflux 0.24.0 both commands keep their options, defaults and images. mlx-teacache 0.17.0 to 0.18.1 also changed
+  some warnings and errors, on paths these two commands do not use. The Qwen-Image command is not affected by the
+  mflux change.
+
 ## [0.3.0] - 2026-11-06
 
 ### Added

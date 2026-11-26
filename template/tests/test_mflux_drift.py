@@ -41,23 +41,49 @@ RELEASED_0_24 = "mflux v.0.24.0 released"
 # chip check are unchanged. When an mflux release carries this change, that release gets its own label, and this one
 # may then be dropped.
 MAIN_17B47E9 = "mflux main 17b47e9, unreleased, reviewed 2026-11-08"
+# Reviewed: e62f996 (2026-11-26). Since 17b47e9 the pinned parts that moved are ZImage.generate_image and
+# ZImage._predict (mflux PR 1021, SSD streaming for Z-Image). ZImage gains ssd_stream (an __init__ keyword, default
+# False); generate_image now builds its step as self._predict(self.transformer, compile_predict=not self.ssd_stream),
+# and _predict(transformer, compile_predict=True) returns the eager step when compile_predict is False or
+# AppleSiliconUtil.is_m1_or_m2() is true (a base or Pro M1 or M2), the compiled one otherwise. That chip check is
+# unchanged. Nothing else generate_image records changed, so FakeZImage.generate_image stands. A _predict a plugin
+# installs must now accept compile_predict, or every run fails with a TypeError before its first step. _core.run never
+# calls _predict: it loads through ZImageCommand.load and generates through ZImageCommand.generate, and both, main()
+# and the Z-Image parser's options are unchanged here. ssd_stream is not reachable from the base Z-Image command: its parser has no
+# --ssd-stream (parsers.py adds the option in a helper this parser does not call), and ZImageCommand.load does not
+# pass ssd_stream, so the model keeps False, generate_image passes compile_predict=True, and the step is compiled
+# exactly when it was before. parsers.py's other changes against 0.24.0's: positive_float now refuses NaN and
+# infinity, which reaches --mlx-cache-limit-gb; add_compute_precision_arguments and add_vae_full_precision_arguments
+# gained an optional help-text parameter; a new --stream-lora helper; the --small-text-encoder help is reworded;
+# parse_args sets steps_is_default when it fills in the default step count; and CommandLineParser.parse_args's
+# --config-from-conf replay restores more fields. None of them moves a pinned part.
+MAIN_E62F996 = "mflux main e62f996, unreleased, reviewed 2026-11-26"
 # The versions each reviewed source reports.
-REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",)}
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",), MAIN_E62F996: ("0.24.0",)}
 
 # The build_parser digest is a parser_fingerprint value: it reads the options and helper calls, not the wording of
 # help, help_text, description or epilog, so a reworded --help line moves no pin. Every other digest is ast_fingerprint.
-BUILD_PARSER_DIGESTS = {RELEASED_0_24: "dd5d356295c7d1b3", MAIN_17B47E9: "dd5d356295c7d1b3"}
-MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe"}
+BUILD_PARSER_DIGESTS = {
+    RELEASED_0_24: "dd5d356295c7d1b3",
+    MAIN_17B47E9: "dd5d356295c7d1b3",
+    MAIN_E62F996: "dd5d356295c7d1b3",
+}
+MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe", MAIN_E62F996: "1f3058eda927d0fe"}
 # ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
 # model) and returns the model.
-LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b", MAIN_E62F996: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_17B47E9: "061ebd266b779369"}
+GENERATE_IMAGE_DIGESTS = {
+    RELEASED_0_24: "88204535dc85b78e",
+    MAIN_17B47E9: "061ebd266b779369",
+    MAIN_E62F996: "0f58ac0d9f35cc5f",
+}
 # ZImage._predict, the factory a plugin replaces to keep per-step state, and the chip check that decides whether mflux
 # compiles the step it returns. AGENTS.md's "Compile and memory" section describes both.
 PREDICT_DIGESTS = {
     RELEASED_0_24: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
     MAIN_17B47E9: ("016c64c92ceefbdf", "3264a79fbfa0f1a5"),
+    MAIN_E62F996: ("09a1c99925ad1929", "3264a79fbfa0f1a5"),
 }
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
@@ -80,7 +106,11 @@ DESTS = (
     "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
     "width",
 )  # fmt: skip
-OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_17B47E9: (OPTION_STRINGS, DESTS)}
+OPTIONS = {
+    RELEASED_0_24: (OPTION_STRINGS, DESTS),
+    MAIN_17B47E9: (OPTION_STRINGS, DESTS),
+    MAIN_E62F996: (OPTION_STRINGS, DESTS),
+}
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
 # from there on (load, callback registration, the per-seed generate/save loop, the except/finally). _core.run mirrors
@@ -89,7 +119,7 @@ POST_LOAD = {
     "mflux-generate-z-image-myplugin": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee", MAIN_E62F996: "812cb2e320c4eaee"},
     ),
 }
 
@@ -111,11 +141,26 @@ PATH_RESOLUTION_RULES = {
         (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
         (4, "error", "always", "Path not found"),
     ],
+    MAIN_E62F996: [
+        (0, "none", "is_none", "Use local filesystem path"),
+        (1, "local", "exists_locally", "Use local filesystem path"),
+        (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
+        (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
+        (4, "error", "always", "Path not found"),
+    ],
 }
 # PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
 # names the rules, not what they do; these two pin that.
-PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_17B47E9: "b0f9ed4e22018374"}
-PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_17B47E9: "c7fd6091bc7ea323"}
+PATH_RESOLUTION_CHECK_DIGESTS = {
+    RELEASED_0_24: "b0f9ed4e22018374",
+    MAIN_17B47E9: "b0f9ed4e22018374",
+    MAIN_E62F996: "b0f9ed4e22018374",
+}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {
+    RELEASED_0_24: "c7fd6091bc7ea323",
+    MAIN_17B47E9: "c7fd6091bc7ea323",
+    MAIN_E62F996: "c7fd6091bc7ea323",
+}
 
 REVIEW_FIRST = (
     "review the mflux change first (AGENTS.md, 'When the drift test fails'), then record this value under a label "

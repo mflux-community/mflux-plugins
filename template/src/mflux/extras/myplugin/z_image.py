@@ -86,8 +86,9 @@ def apply(model: Any, args: Namespace) -> Any:
     """Attach your library to the loaded model here, once per run, before the first image, and return the plugin's
     handle (before_generate and after_generate receive it). The template attaches nothing and returns None, so the
     command behaves exactly like mflux-generate-z-image. To change the prediction step, replace model._predict with a
-    factory (transformer) -> predict that builds the step from the transformer mflux passes for each image, never
-    from model.transformer. Read "Compile and memory" in AGENTS.md before you attach anything: mflux may compile the
+    factory (transformer, compile_predict=True) -> predict that builds the step from the transformer mflux passes for
+    each image, never from model.transformer. It must accept the compile_predict keyword: mflux after 0.24.0 passes
+    it, and a one-argument factory raises TypeError there. Read "Compile and memory" in AGENTS.md before you attach anything: mflux may compile the
     prediction step, and the handle must not keep the transformer alive."""
     return None
 

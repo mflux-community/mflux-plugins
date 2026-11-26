@@ -103,8 +103,8 @@ card declares `Qwen/Qwen-Image-2512` as `base_model`, and put copies of the orig
 
 ## When the drift test fails
 
-`tests/test_mflux_drift.py` pins mflux's Z-Image `build_parser()`, `main()`, `ZImageCommand.load` and
-`ZImage.generate_image` by AST digest, and the parts of mflux's Qwen-Image command the plugin calls or wraps
+`tests/test_mflux_drift.py` pins mflux's Z-Image `build_parser()`, `main()`, `ZImageCommand.load`,
+`ZImage.generate_image` and `ZImage._predict` by AST digest, and the parts of mflux's Qwen-Image command the plugin calls or wraps
 (`qwen_image_generate.py` and `QwenImage.generate_image`). It also pins the parser's option strings and dests, the
 part of `main()` after `load()` (one row per adapter) and the step signatures, and it checks that the copied block still matches `main()`.
 It also pins mflux's path-resolution rules (`PATH_RESOLUTION_RULES`). Two functions are copied from mflux, not
@@ -125,6 +125,7 @@ When an mflux update turns it red:
    parser option that skips or caches steps needs a refusal and an entry in the refusal tests. Code that uses
    something only the newer mflux has must still import and run on the oldest supported release.
 3. If `ZImage.generate_image` changed, bring `FakeZImage.generate_image` in `tests/_fakes.py` in line with it. If
+   `ZImage._predict` changed, bring `LoopingFakeZImage.denoise` in `tests/_fakes.py` in line with how mflux calls it. If
    `QwenImage.generate_image` changed, do the same for `FakeQwenImage`.
 4. Record the values the failure messages print under a label naming the mflux release you reviewed
    (`mflux v.0.24.0 released`), with the versions that release reports. A release keeps its label while the package
@@ -161,12 +162,12 @@ When an mflux update turns it red:
 
 ## Dependencies and version pins
 
-- Runtime dependencies: `mlx-teacache[mflux]>=0.16.0` and `mflux>=0.24`.
+- Runtime dependencies: `mlx-teacache[mflux]>=0.18.1` and `mflux>=0.24`.
 - mlx-teacache's `[mflux]` extra is `mflux>=0.24` with no upper bound, so nothing limits mflux from above. The direct
   `mflux` requirement is a lower bound only: 0.24 is the first mflux that imports with pillow 13 ([mflux PR 890](https://github.com/mflux-community/mflux/pull/890)).
   Never give an mflux requirement an upper bound here, because a newer mflux runs and warns. `tests/test_wheel.py`
   checks this.
-- mlx-teacache 0.16.0 records mflux 0.24.0 as its newest checked release. It prints no warning there. On a newer
+- mlx-teacache 0.18.1 records mflux 0.24.0 as its newest checked release. It prints no warning there. On a newer
   mflux it issues `TeaCacheUntestedMfluxWarning` and TeaCache still applies. The test run shows that warning instead of
   failing on it (`filterwarnings` in `pyproject.toml`); the release job's wheel test installs the newest mflux.
 - All of them come from PyPI. Don't add a `sources` table under `[tool.uv]`, or any git or path source, to a committed

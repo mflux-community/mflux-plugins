@@ -18,10 +18,12 @@ from _fakes import FakeZImage, LoopingFakeQwenImage, LoopingFakeZImage
 from conftest import _clear_fakes
 from mflux.callbacks.instances.battery_saver import BatterySaver
 from mflux.callbacks.instances.memory_saver import MemorySaver
+from mflux.models.common.config.config import Config
 from mflux.models.common.config.model_config import AVAILABLE_MODELS
 from mflux.models.qwen.cli import qwen_image_generate
 from mflux.models.qwen.model.qwen_transformer.qwen_transformer_block import QwenTransformerBlock
 from mflux.models.z_image.cli import z_image_generate
+from mflux.models.z_image.latent_creator import ZImageLatentCreator
 from mlx_teacache import TeaCacheUncalibratedCheckpointWarning, TeaCacheUntestedMfluxWarning, _mflux_versions
 from mlx_teacache.testing import reset_untested_mflux_warning
 
@@ -55,10 +57,12 @@ def test_the_predict_closure_is_the_only_holder_of_the_transformer() -> None:
     assert model._predict is factory and handle.stats is not None  # both still exist, and neither held it
 
 
-def _run_with_the_real_library(run_command, monkeypatch, tmp_path: Path, **extra_kwargs):
+def _run_with_the_real_library(
+    run_command, monkeypatch, tmp_path: Path, *, extra_argv: tuple[str, ...] = (), **extra_kwargs
+):
     """Runs the command on LoopingFakeZImage with the real apply_teacache, passing it what run() passes merged with
-    extra_kwargs (an extra_kwargs key replaces run()'s, and only one run() left as None). Returns the model, the one
-    handle and the image's JSON sidecar."""
+    extra_kwargs (an extra_kwargs key replaces run()'s, and only one run() left as None), and extra_argv after the
+    command's usual arguments. Returns the model, the one handle and the image's JSON sidecar."""
     applied: list[tuple[LoopingFakeZImage, mlx_teacache.TeaCacheHandle]] = []
 
     def apply_and_keep(flux, **kwargs):
@@ -74,7 +78,7 @@ def _run_with_the_real_library(run_command, monkeypatch, tmp_path: Path, **extra
     out = tmp_path / "out.png"
     run_command(
         ["--prompt", "x", "--seed", "7", "--steps", "6", "--width", "64", "--height", "64", "--make-conf",
-         "--output", str(out)]
+         "--output", str(out), *extra_argv]
     )  # fmt: skip
     ((model, handle),) = applied
     return model, handle, json.loads(out.with_suffix(".metadata.json").read_text())
@@ -103,7 +107,7 @@ def test_the_skipped_steps_the_real_library_decides_are_the_ones_the_image_recor
     calibrated range: a polynomial that predicts almost no change keeps the accumulator under the 0.20 threshold
     passed with it, so the real gate skips every step between the forced first and last except the one that seeds the
     cache. The test checks the whole decision list (forced, computed, skipped, skipped, skipped, forced on
-    mlx-teacache 0.16.0 and 0.18.0) and that the image records its 3 skipped steps."""
+    mlx-teacache 0.18.1) and that the image records its 3 skipped steps."""
     _, handle, recorded = _run_with_the_real_library(
         run_command, monkeypatch, tmp_path, coefficients=(0.0, 0.0, 0.0, 0.0, 1e-4), rel_l1_thresh=0.20
     )
@@ -135,8 +139,8 @@ def rearmed_untested_mflux_warning() -> Iterator[None]:
     reset_untested_mflux_warning()
 
 
-# The pair the lock holds, reviewed together: mlx-teacache 0.16.0 verified mflux up to 0.24.0.
-REVIEWED_PAIR = ("0.24.0", "0.16.0")
+# The pair the lock holds, reviewed together: mlx-teacache 0.18.1 verified mflux up to 0.24.0.
+REVIEWED_PAIR = ("0.24.0", "0.18.1")
 
 
 def locked_versions(*names: str) -> tuple[str, ...]:
@@ -209,6 +213,62 @@ def test_the_real_handle_fills_both_keys_in_the_z_image_sidecar(run_command, mon
     assert recorded["teacache_mflux_version"] == importlib.metadata.version("mflux")
 
 
+@pytest.mark.parametrize("compile_predict", [True, False])
+def test_a_z_image_run_does_not_crash_when_mflux_passes_compile_predict(compile_predict: bool) -> None:
+    """Bug: mlx-teacache's Z-Image predict replacement accepts only the transformer, or only one value of
+    compile_predict, so on an mflux whose ZImage.generate_image calls
+    self._predict(self.transformer, compile_predict=not self.ssd_stream), every Z-Image run with TeaCache stops with a
+    TypeError after the weights load, before its first denoising step.
+
+    The test does not run the command: it replays by hand the first step of mflux's generate_image loop. The callback
+    context starts, the before-loop callbacks run, the factory is called with compile_predict, then one denoising step
+    and the in-loop callbacks. True is what mflux passes on the command's path, where the model is not streamed. False
+    is what mflux passes for a model loaded with ssd_stream=True, which mlx-teacache 0.18.1 refuses at apply, so False
+    is checked only as the keyword's other value. The step returns one noise prediction per latent."""
+    model = LoopingFakeZImage(model_config=AVAILABLE_MODELS["z-image"])
+    mlx_teacache.apply_teacache(model)
+    config = Config(
+        model_config=model.model_config,
+        num_inference_steps=6,
+        width=64,
+        height=64,
+        guidance=4.0,
+        scheduler="flow_match_euler_discrete",
+    )
+    latents = ZImageLatentCreator.create_noise(7, config.height, config.width)
+    text_encodings = mx.random.normal((7, LoopingFakeZImage.CAPTION_DIM), key=mx.random.key(1)).astype(mx.bfloat16)
+    ctx = model.callbacks.start(seed=7, prompt="x", config=config)
+    ctx.before_loop(latents)
+    predict = model._predict(model.transformer, compile_predict=compile_predict)
+    t = config.init_time_step  # the first step of mflux's loop over config.time_steps
+    sigma_t = config.scheduler.sigmas[t].reshape((1,))
+    noise = predict(
+        latents=latents,
+        timestep=mx.ones_like(sigma_t) - sigma_t,
+        sigmas=config.scheduler.sigmas,
+        text_encodings=text_encodings,
+        negative_encodings=text_encodings,
+        guidance=config.guidance,
+    )
+    ctx.in_loop(t, config.scheduler.step(noise=noise, timestep=t, latents=latents))
+    mx.eval(noise)
+    assert noise.shape == latents.shape == (16, 1, 8, 8)  # ZImageLatentCreator: (16, 1, height // 8, width // 8)
+    assert bool(mx.all(mx.isfinite(noise)))
+
+
+def test_real_library_warns_once_for_an_unknown_z_image_checkpoint(run_command, monkeypatch, tmp_path: Path) -> None:
+    """Bug: for a local folder the plugin's model-path warning is lost (the folder is taken for a known copy of the
+    calibrated checkpoint), or the real library warns as well (the command hands it a config named after the folder),
+    so the user gets no warning for one unverified Z-Image checkpoint, or two."""
+    (tmp_path / "weights").mkdir()  # the test's own directory is the working directory
+    with pytest.warns(TeaCacheUncalibratedCheckpointWarning) as caught:
+        _run_with_the_real_library(run_command, monkeypatch, tmp_path, extra_argv=("--model", "./weights"))
+    messages = [str(w.message) for w in caught if issubclass(w.category, TeaCacheUncalibratedCheckpointWarning)]
+    assert len(messages) == 1, messages
+    assert messages[0].startswith("./weights may not be Tongyi-MAI/Z-Image,"), messages
+    assert (tmp_path / "out.png").is_file()
+
+
 # Qwen-Image: the real library proxies model.transformer and runs both CFG branches through it.
 
 QWEN_ARGV = ["--prompt", "x", "--seed", "7", "--steps", "6", "--width", "64", "--height", "64"]
@@ -263,7 +323,7 @@ def test_qwen_real_apply_commits_what_the_command_records(run_command, monkeypat
     before the wrapped generate_image commits them, the library records one decision per transformer call (two per
     step), or the image records another variant or threshold than the one the library ran.
 
-    Expected decisions, from mlx-teacache's gate and qwen-image-2512's calibration (the same in 0.16.0 and 0.18.0):
+    Expected decisions, from mlx-teacache 0.18.1's gate and its qwen-image-2512 calibration:
     step 0 is forced (and only anchors the signal; a forced step caches nothing), step 1 has no cached residual yet so
     it computes and seeds, step 5 is forced. Steps 2 to 4 price the measured change after clamping it into the
     calibrated range (0.081, 0.471): even at the range floor a step costs 0.038, and a single step reaches the 0.25

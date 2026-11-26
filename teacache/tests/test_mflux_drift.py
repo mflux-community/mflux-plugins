@@ -44,18 +44,49 @@ RELEASED_0_24 = "mflux v.0.24.0 released"
 # was built with Z-Image Turbo's --small-text-encoder; ZImageCommand.load never passes it. When an mflux release
 # carries this change, that release gets its own label, and this one may then be dropped.
 MAIN_17B47E9 = "mflux main 17b47e9, unreleased, reviewed 2026-11-08"
+# Reviewed: e62f996 (2026-11-26). Since 17b47e9 the pinned parts that moved are ZImage.generate_image and
+# ZImage._predict (mflux PR 1021, SSD streaming for Z-Image). ZImage gains ssd_stream (an __init__ keyword, default
+# False); generate_image now builds its step as self._predict(self.transformer, compile_predict=not self.ssd_stream),
+# and _predict(transformer, compile_predict=True) returns the eager step when compile_predict is False. Nothing else
+# generate_image records changed, so FakeZImage.generate_image stands; LoopingFakeZImage.denoise passes compile_predict
+# when the installed ZImage._predict takes it. _core.run never calls _predict: it loads through ZImageCommand.load and
+# generates through ZImageCommand.generate, and both, main() and the Z-Image parser's options are unchanged here.
+# mlx-teacache replaces model._predict, and only its releases from 0.18.1 accept compile_predict. ssd_stream is not
+# reachable from the base Z-Image command: its parser has no --ssd-stream (parsers.py adds the option in a helper this
+# parser does not call), and ZImageCommand.load does not pass ssd_stream, so the model keeps False and generate_image
+# passes compile_predict=True. parsers.py's other changes against 0.24.0's: positive_float now refuses NaN and
+# infinity, which reaches --mlx-cache-limit-gb; add_compute_precision_arguments and add_vae_full_precision_arguments
+# gained an optional help-text parameter; a new --stream-lora helper; the --small-text-encoder help is reworded;
+# parse_args sets steps_is_default when it fills in the default step count; and CommandLineParser.parse_args's
+# --config-from-conf replay restores more fields. None of them moves a pinned part.
+MAIN_E62F996 = "mflux main e62f996, unreleased, reviewed 2026-11-26"
 # The versions each reviewed source reports.
-REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",)}
+REPORTED_VERSIONS = {RELEASED_0_24: ("0.24.0",), MAIN_17B47E9: ("0.24.0",), MAIN_E62F996: ("0.24.0",)}
 
 # The build_parser digests are parser_fingerprint values: they read the options and helper calls, not the wording of
 # help, help_text, description or epilog, so a reworded --help line moves no pin. Every other digest is ast_fingerprint.
-BUILD_PARSER_DIGESTS = {RELEASED_0_24: "dd5d356295c7d1b3", MAIN_17B47E9: "dd5d356295c7d1b3"}
-MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe"}
+BUILD_PARSER_DIGESTS = {
+    RELEASED_0_24: "dd5d356295c7d1b3",
+    MAIN_17B47E9: "dd5d356295c7d1b3",
+    MAIN_E62F996: "dd5d356295c7d1b3",
+}
+MAIN_DIGESTS = {RELEASED_0_24: "1f3058eda927d0fe", MAIN_17B47E9: "1f3058eda927d0fe", MAIN_E62F996: "1f3058eda927d0fe"}
 # ZImageCommand.load, which _core.run calls for the model: it builds the ZImage, calls VAEDecodeOptions.apply(args,
 # model) and returns the model.
-LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b"}
+LOAD_DIGESTS = {RELEASED_0_24: "d91dfaa735845a7b", MAIN_17B47E9: "d91dfaa735845a7b", MAIN_E62F996: "d91dfaa735845a7b"}
 # ZImage.generate_image, the method tests/_fakes.py's FakeZImage.generate_image reproduces up to the image record.
-GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "88204535dc85b78e", MAIN_17B47E9: "061ebd266b779369"}
+GENERATE_IMAGE_DIGESTS = {
+    RELEASED_0_24: "88204535dc85b78e",
+    MAIN_17B47E9: "061ebd266b779369",
+    MAIN_E62F996: "0f58ac0d9f35cc5f",
+}
+# ZImage._predict, whose signature LoopingFakeZImage.denoise follows when it builds the step, and which mlx-teacache
+# replaces on the model.
+PREDICT_DIGESTS = {
+    RELEASED_0_24: "016c64c92ceefbdf",
+    MAIN_17B47E9: "016c64c92ceefbdf",
+    MAIN_E62F996: "09a1c99925ad1929",
+}
 
 # Every option string and dest of the Z-Image parser, sorted. build_parser's digest sees only the helper calls it
 # makes; an option added inside a shared helper (add_image_generator_arguments and the like) shows up only here.
@@ -77,17 +108,45 @@ DESTS = (
     "seed", "steps", "stepwise_image_output_dir", "vae_full_precision", "vae_tile_size", "vae_tiling", "verbose",
     "width",
 )  # fmt: skip
-OPTIONS = {RELEASED_0_24: (OPTION_STRINGS, DESTS), MAIN_17B47E9: (OPTION_STRINGS, DESTS)}
+OPTIONS = {
+    RELEASED_0_24: (OPTION_STRINGS, DESTS),
+    MAIN_17B47E9: (OPTION_STRINGS, DESTS),
+    MAIN_E62F996: (OPTION_STRINGS, DESTS),
+}
 
 # The Qwen-Image command's parts, reviewed on PyPI 0.24.0 (qwen_image_generate.py, variants/txt2img/qwen_image.py and
 # the parser helpers the Qwen-Image parser calls: add_lora_arguments keeps bake_by_default=True, and it does not call
 # add_cfg_end_arguments).
-QWEN_BUILD_PARSER_DIGESTS = {RELEASED_0_24: "8c29b8e9b296d0ab", MAIN_17B47E9: "8c29b8e9b296d0ab"}
-QWEN_MAIN_DIGESTS = {RELEASED_0_24: "74c1b41aa77a0ef0", MAIN_17B47E9: "74c1b41aa77a0ef0"}
-QWEN_VALIDATE_DIGESTS = {RELEASED_0_24: "7e09191dff32f856", MAIN_17B47E9: "7e09191dff32f856"}
-QWEN_LOAD_DIGESTS = {RELEASED_0_24: "b18636d16409e098", MAIN_17B47E9: "b18636d16409e098"}
-QWEN_GENERATE_DIGESTS = {RELEASED_0_24: "ee92a1a33b87793d", MAIN_17B47E9: "ee92a1a33b87793d"}
-QWEN_GENERATE_IMAGE_DIGESTS = {RELEASED_0_24: "9e6846e3f5ed09bb", MAIN_17B47E9: "9e6846e3f5ed09bb"}
+QWEN_BUILD_PARSER_DIGESTS = {
+    RELEASED_0_24: "8c29b8e9b296d0ab",
+    MAIN_17B47E9: "8c29b8e9b296d0ab",
+    MAIN_E62F996: "8c29b8e9b296d0ab",
+}
+QWEN_MAIN_DIGESTS = {
+    RELEASED_0_24: "74c1b41aa77a0ef0",
+    MAIN_17B47E9: "74c1b41aa77a0ef0",
+    MAIN_E62F996: "74c1b41aa77a0ef0",
+}
+QWEN_VALIDATE_DIGESTS = {
+    RELEASED_0_24: "7e09191dff32f856",
+    MAIN_17B47E9: "7e09191dff32f856",
+    MAIN_E62F996: "7e09191dff32f856",
+}
+QWEN_LOAD_DIGESTS = {
+    RELEASED_0_24: "b18636d16409e098",
+    MAIN_17B47E9: "b18636d16409e098",
+    MAIN_E62F996: "b18636d16409e098",
+}
+QWEN_GENERATE_DIGESTS = {
+    RELEASED_0_24: "ee92a1a33b87793d",
+    MAIN_17B47E9: "ee92a1a33b87793d",
+    MAIN_E62F996: "ee92a1a33b87793d",
+}
+QWEN_GENERATE_IMAGE_DIGESTS = {
+    RELEASED_0_24: "9e6846e3f5ed09bb",
+    MAIN_17B47E9: "9e6846e3f5ed09bb",
+    MAIN_E62F996: "9e6846e3f5ed09bb",
+}
 # Per pinned Qwen part: the function, the fingerprint its values are, its recorded values, and what to bring in line
 # when it moves.
 QWEN_PINS = {
@@ -146,7 +205,11 @@ QWEN_DESTS = (
     "pid_degrade_sigma", "prompt", "prompt_file", "quantize", "scheduler", "seed", "steps",
     "stepwise_image_output_dir", "vae_tile_size", "vae_tiling", "verbose", "width",
 )  # fmt: skip
-QWEN_OPTIONS = {RELEASED_0_24: (QWEN_OPTION_STRINGS, QWEN_DESTS), MAIN_17B47E9: (QWEN_OPTION_STRINGS, QWEN_DESTS)}
+QWEN_OPTIONS = {
+    RELEASED_0_24: (QWEN_OPTION_STRINGS, QWEN_DESTS),
+    MAIN_17B47E9: (QWEN_OPTION_STRINGS, QWEN_DESTS),
+    MAIN_E62F996: (QWEN_OPTION_STRINGS, QWEN_DESTS),
+}
 
 # Per adapter: the mirrored mflux main(), its first statement after the pre-load block, and the digest of everything
 # from there on (load, callback registration, the per-seed generate/save loop, the except/finally). _core.run mirrors
@@ -155,14 +218,14 @@ POST_LOAD = {
     "mflux-generate-z-image-teacache": (
         z_image_generate.main,
         "model = ZImageCommand.load(args)",
-        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee"},
+        {RELEASED_0_24: "812cb2e320c4eaee", MAIN_17B47E9: "812cb2e320c4eaee", MAIN_E62F996: "812cb2e320c4eaee"},
     ),
     # mflux's Qwen main() resolves the sizes into a copy of args before its seed loop; _core.run passes the parsed
     # args, which changes no output because QwenImageCommand.generate resolves them again.
     "mflux-generate-qwen-teacache": (
         qwen_image_generate.main,
         "model = QwenImageCommand.load(args)",
-        {RELEASED_0_24: "ff216a1e1a70ec70", MAIN_17B47E9: "ff216a1e1a70ec70"},
+        {RELEASED_0_24: "ff216a1e1a70ec70", MAIN_17B47E9: "ff216a1e1a70ec70", MAIN_E62F996: "ff216a1e1a70ec70"},
     ),
 }
 
@@ -184,11 +247,26 @@ PATH_RESOLUTION_RULES = {
         (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
         (4, "error", "always", "Path not found"),
     ],
+    MAIN_E62F996: [
+        (0, "none", "is_none", "Use local filesystem path"),
+        (1, "local", "exists_locally", "Use local filesystem path"),
+        (2, "hf_cached", "is_hf_cached", "Use cached HuggingFace files (no network)"),
+        (3, "hf_download", "is_hf_format", "Download from HuggingFace"),
+        (4, "error", "always", "Path not found"),
+    ],
 }
 # PathResolution._check and _execute, which decide what each rule above tests and does. _core.REVIEWED_PATH_RULES
 # names the rules, not what they do; these two pin that.
-PATH_RESOLUTION_CHECK_DIGESTS = {RELEASED_0_24: "b0f9ed4e22018374", MAIN_17B47E9: "b0f9ed4e22018374"}
-PATH_RESOLUTION_EXECUTE_DIGESTS = {RELEASED_0_24: "c7fd6091bc7ea323", MAIN_17B47E9: "c7fd6091bc7ea323"}
+PATH_RESOLUTION_CHECK_DIGESTS = {
+    RELEASED_0_24: "b0f9ed4e22018374",
+    MAIN_17B47E9: "b0f9ed4e22018374",
+    MAIN_E62F996: "b0f9ed4e22018374",
+}
+PATH_RESOLUTION_EXECUTE_DIGESTS = {
+    RELEASED_0_24: "c7fd6091bc7ea323",
+    MAIN_17B47E9: "c7fd6091bc7ea323",
+    MAIN_E62F996: "c7fd6091bc7ea323",
+}
 
 REVIEW_FIRST = (
     "review the mflux change first (AGENTS.md, 'When the drift test fails'), then record this value under a label "
@@ -461,6 +539,18 @@ def test_mflux_generate_image_is_a_reviewed_one() -> None:
     )
 
 
+def test_mflux_predict_is_a_reviewed_one() -> None:
+    """Bug: mflux changes how ZImage._predict builds the step (another parameter, a different default for
+    compile_predict), and LoopingFakeZImage.denoise keeps calling it the old way, so the real-library tests pass
+    against a call mflux's generate_image no longer makes, or mlx-teacache's replacement meets an argument nobody
+    checked."""
+    actual = ast_fingerprint(ZImage._predict)
+    assert reviewed_sources(PREDICT_DIGESTS, actual), (
+        f"ZImage._predict changed: bring LoopingFakeZImage.denoise in tests/_fakes.py in line with it; "
+        f"{REVIEW_FIRST} {actual}"
+    )
+
+
 @pytest.mark.skipif(
     not hasattr(ZImage, "_generation_parameters"),
     reason="mflux 0.24.0 builds the generation_parameters dict inline in ZImage.generate_image, which "
@@ -529,6 +619,7 @@ def pinned_sources(*, recorded_only: bool = False) -> dict[str, set[str]]:
         "main": possible(MAIN_DIGESTS, ast_fingerprint(z_image_generate.main)),
         "load": possible(LOAD_DIGESTS, ast_fingerprint(ZImageCommand.load)),
         "generate_image": possible(GENERATE_IMAGE_DIGESTS, ast_fingerprint(ZImage.generate_image)),
+        "_predict": possible(PREDICT_DIGESTS, ast_fingerprint(ZImage._predict)),
         "qwen options": possible(QWEN_OPTIONS, parser_options(qwen_image_generate)),
         **{
             part: possible(digests, fingerprint(function))

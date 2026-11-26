@@ -67,8 +67,9 @@ def warn_before_load(args: Namespace, model_config: ModelConfig) -> None:
     warn_ineffective_options(args, model_config)
 
 
-# Z-Image needs one optional hook (after_checks); active_steps keeps the Config-based default, and
-# mlx-teacache has no checkpoint check for Z-Image, so this package's own model-path warning applies,
+# Z-Image needs one optional hook (after_checks); active_steps keeps the Config-based default.
+# mlx-teacache checks the checkpoint for Z-Image too, but keys the check on the model name, which this
+# command always sets to Z-Image's own; so this package's own model-path warning is the one that applies,
 # except on the known copies of the calibrated checkpoint.
 ADAPTER = Adapter(
     command="mflux-generate-z-image-teacache",
