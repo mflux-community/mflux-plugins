@@ -187,7 +187,7 @@ took 87 to 89 seconds after the first, which took 95, and Base runs took 166 to 
 
 ## What the command checks
 
-The command checks your request before it loads any weights. When it can't run, it stops with exit code 2 and a message
+The command checks your request before it loads the model. When it can't run, it stops with exit code 2 and a message
 that says why. These refusals also tell you to run the plain mflux command to generate without previews:
 
 - `--taef-every` below 1;
@@ -214,15 +214,20 @@ These refusals only explain the problem:
 - a `--model` that is not one of mflux's names, not a local path that exists and not a Hugging Face repo id
   (`org/model`). On an mflux whose model-path rules differ from the checked release, the name is left to mflux. A
   missing path restored with `-C` names the file it came from;
-- anything mflux's own option checks refuse, with mflux's own message.
+- anything mflux's own option checks refuse before it loads anything, with mflux's own message.
+
+Checks mflux makes while it loads the model end with mflux's own error, a traceback and exit code 1, as with the plain
+mflux command. On mflux's main branch after 0.24.0 (in no release as of 2026-11-26), the Turbo command has such checks
+for `--ssd-stream`: it stops when the run also has `-q`, `--compute-precision`, or a `--lora` without `--no-bake-lora`.
 
 Exit codes:
 
 - 0: the run finished, you pressed Ctrl-C during generation (the last preview stays on disk), or the prompt file
   couldn't be read.
 - 1: the decoder couldn't be prepared (checked before the model loads; it prints `could not prepare the TAEF preview
-  decoder`), or the run failed after the model loaded (the traceback is printed).
-- 2: the request was refused before any weights loaded.
+  decoder`), or the model failed to load (mflux's error and traceback), or the run failed after the model loaded (the
+  traceback is printed).
+- 2: the plugin's checks or mflux's argument checks refused the request before the model loaded.
 
 If a preview fails during a run (a decode error, a folder you can't write to), the command prints one warning on
 stderr, stops previews for that seed and finishes the image. The plugin writes nothing into the image's metadata or the
